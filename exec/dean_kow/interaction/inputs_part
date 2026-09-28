@@ -69,7 +69,8 @@ amr.ip_alpha    = 3.       # gema only
 #amr.ip_R_rep   = 0.05
 #amr.ip_re      = 0.       # default 0
 #amr.ip_type    = wca      # U = 4*ip_eps*((ip_R/r)^12-(ip_R/r)^6)+ip_eps for r < 2^(1/6)*ip_R, 0 otherwise; ip_range defaults to 2^(1/6)*ip_R
-#amr.ip_wca_rcap = 0.8      # wca only: U(r) held at U(ip_wca_rcap*ip_R) for smaller r; must be in (0, 2^(1/6))
+#amr.ip_wca_rcap = 0.8      # wca only: SPDE mesh kernel U(r) held at U(ip_wca_rcap*ip_R) for smaller r; must be in (0, 2^(1/6))
+#amr.ip_wca_cap_part = 0    # wca only: 1 = also cap the particle force (zero for r < ip_wca_rcap*ip_R); 0 = exact WCA, choose dt to resolve the core
 
 # External potential (ep_ prefix); defaults shown
 #amr.use_ext_pot = 0        # 1 = on, 0 = off

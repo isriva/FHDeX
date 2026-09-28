@@ -25,7 +25,8 @@ enum IntPotType : int {
     MORSE = 2, // generalized Morse: U = -ip_eps_att*exp(-(r-ip_re)/ip_R_att)
                //                        + ip_eps_rep*exp(-(r-ip_re)/ip_R_rep)
     WCA  = 3   // U = 4*ip_eps*((ip_R/r)^12 - (ip_R/r)^6) + ip_eps for r < 2^(1/6)*ip_R,
-               // 0 otherwise; U(r) is held at U(ip_wca_rcap*ip_R) for smaller r
+               // 0 otherwise. The mesh kernel holds U(r) at U(ip_wca_rcap*ip_R) for
+               // smaller r; the particle force is uncapped unless ip_wca_cap_part = 1
 };
 
 // Below this separation the Morse pair force is set to zero: dU/dr does not
@@ -49,6 +50,7 @@ struct PotentialParams
     amrex::Real ip_R_rep    = 0.05;  // morse only
     amrex::Real ip_re       = 0.0;   // morse only
     amrex::Real ip_wca_rcap = 0.8;   // wca only: core cap radius in units of ip_R
+    int         ip_wca_cap_part = 0; // wca only: 1 = also cap the particle force
     amrex::Real ip_range    = 0.0;   // particle pair cutoff radius; <= 0 means no cutoff
 
     // external potential
@@ -59,7 +61,8 @@ struct PotentialParams
 };
 
 // Interaction potential U(r), not truncated by ip_range (the SPDE uses the
-// full kernel; ip_range is the particle pair cutoff)
+// full kernel; ip_range is the particle pair cutoff). This is the SPDE mesh
+// kernel, so the WCA core is always capped here.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real ip_U (amrex::Real r, PotentialParams const& pot) noexcept
 {
@@ -88,7 +91,7 @@ amrex::Real ip_U (amrex::Real r, PotentialParams const& pot) noexcept
 }
 
 // (dU/dr)/r, so that the force on particle i from particle j is
-// (dU/dr)/r * (x_j - x_i)
+// (dU/dr)/r * (x_j - x_i). Used only by the particles.
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 amrex::Real ip_dUdr_over_r (amrex::Real r, PotentialParams const& pot) noexcept
 {
@@ -105,7 +108,9 @@ amrex::Real ip_dUdr_over_r (amrex::Real r, PotentialParams const& pot) noexcept
     }
     case IntPotType::WCA:
     {
-        if (r >= ip_wca_rc*pot.ip_R || r < pot.ip_wca_rcap*pot.ip_R) { return 0.0; }
+        if (r >= ip_wca_rc*pot.ip_R) { return 0.0; }
+        // uncapped by default: resolving the r^-13 core is left to the choice of dt
+        if (pot.ip_wca_cap_part && r < pot.ip_wca_rcap*pot.ip_R) { return 0.0; }
         const amrex::Real s2 = (pot.ip_R*pot.ip_R)/(r*r);
         const amrex::Real s6 = s2*s2*s2;
         return -24.0 * pot.ip_eps * (2.0*s6*s6 - s6) / (r*r);
@@ -172,6 +177,7 @@ inline void read_potential_params (PotentialParams& pot)
     pp.query("ip_R_rep", pot.ip_R_rep);
     pp.query("ip_re", pot.ip_re);
     pp.query("ip_wca_rcap", pot.ip_wca_rcap);
+    pp.query("ip_wca_cap_part", pot.ip_wca_cap_part);
     pp.query("ip_range", pot.ip_range);
 
     pp.query("use_ext_pot", pot.use_ext_pot);
@@ -227,7 +233,8 @@ inline void read_potential_params (PotentialParams& pot)
     }
     if (pot.ip_type == IntPotType::WCA) {
         amrex::Print() << " ip_wca_rcap = " << pot.ip_wca_rcap
-                       << " (U capped at " << ip_U(0.0, pot) << ")";
+                       << " (mesh U capped at " << ip_U(0.0, pot) << ")"
+                       << " ip_wca_cap_part = " << pot.ip_wca_cap_part;
     }
     amrex::Print() << " ip_range = " << pot.ip_range << "\n";
     amrex::Print() << "External potential: use_ext_pot = " << pot.use_ext_pot
