@@ -57,7 +57,7 @@ amr.ip_range   = 0.3125      # interaction potential cutoff radius
 
 # Interaction potential (ip_ prefix); defaults shown
 amr.use_int_pot = 1        # 1 = on, 0 = off
-amr.ip_type     = gema     # gema: ip_eps*exp(-(r/ip_R)^ip_alpha); hk: ip_eps*ip_R*(1-(r/ip_R)^2), 0 for r >= ip_R; morse: see below
+amr.ip_type     = gema     # gema: ip_eps*exp(-(r/ip_R)^ip_alpha); hk: ip_eps*ip_R*(1-(r/ip_R)^2), 0 for r >= ip_R; morse, wca: see below
 amr.ip_eps      = 666.
 amr.ip_R        = 0.1
 amr.ip_alpha    = 3.       # gema only
@@ -68,6 +68,8 @@ amr.ip_alpha    = 3.       # gema only
 #amr.ip_R_att   = 0.1      # must exceed ip_R_rep
 #amr.ip_R_rep   = 0.05
 #amr.ip_re      = 0.       # default 0
+#amr.ip_type    = wca      # U = 4*ip_eps*((ip_R/r)^12-(ip_R/r)^6)+ip_eps for r < 2^(1/6)*ip_R, 0 otherwise; ip_range defaults to 2^(1/6)*ip_R
+#amr.ip_wca_rcap = 0.8      # wca only: U(r) held at U(ip_wca_rcap*ip_R) for smaller r; must be in (0, 2^(1/6))
 
 # External potential (ep_ prefix); defaults shown
 #amr.use_ext_pot = 0        # 1 = on, 0 = off

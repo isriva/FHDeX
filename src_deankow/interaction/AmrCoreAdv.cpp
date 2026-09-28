@@ -527,7 +527,7 @@ AmrCoreAdv::InitFFTLevel0 ()
                 reduce_op_max.eval(bx, reduce_data_max,
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
                 {
-                    // U at the r = 0 cell; the kernel's peak for gema and hk
+                    // U at the r = 0 cell; the kernel's peak for gema, hk and wca
                     // but not for morse, whose U(0) is below its tail
                     const bool origin = (i == 0 && j == 0 && k == 0);
                     return ReduceTuple{origin ? U_arr(i,j,k) : std::numeric_limits<Real>::lowest()};
@@ -780,6 +780,62 @@ PrintContinuumStability (PotentialParams const& pot, Real mu0, Real D, Real dxmi
         if (Rr/dxmin < 4.) {
             amrex::Print() << "  WARNING: ip_R_rep/dx = " << Rr/dxmin
                            << " < 4; the Morse repulsive core is under-resolved\n";
+        }
+        return;
+    } else if (pot.ip_type == IntPotType::WCA) {
+        // Uhat(k) by radial quadrature over the compact support [0, rc):
+        //   2D: 2 pi int U(r) J0(kr) r dr,  3D: 4 pi int U(r) sin(kr)/(kr) r^2 dr
+        // with J0(x) = (1/pi) int_0^pi cos(x sin t) dt (trapezoid, spectrally
+        // accurate for this periodic integrand).
+        const Real rc = ip_wca_rc*R;
+        constexpr int nr = 1000;
+        const Real dr = rc/nr;
+        auto uhat_of = [&] (Real kk) -> Real
+        {
+            Real sum = 0.;
+            for (int n = 0; n < nr; ++n) {
+                const Real r = (n + 0.5)*dr;
+                const Real x = kk*r;
+#if (AMREX_SPACEDIM == 2)
+                constexpr int nt = 64;
+                Real j0 = 0.;
+                for (int m = 0; m < nt; ++m) { j0 += std::cos(x*std::sin(pi*(m + 0.5)/nt)); }
+                j0 /= nt;
+                sum += ip_U(r, pot)*j0*r;
+#else
+                const Real sinc = (x > 1.e-8) ? std::sin(x)/x : 1.;
+                sum += ip_U(r, pot)*sinc*r*r;
+#endif
+            }
+            return ((AMREX_SPACEDIM == 2) ? 2.*pi : 4.*pi)*sum*dr;
+        };
+        uhat0 = uhat_of(0.);
+
+        // U >= 0, so Uhat(0) > 0; a negative lobe at finite k can still drive
+        // a clustering instability at high density, as for HK
+        constexpr int nscan = 400;
+        const Real kmax = 40./R;
+        Real uhat_min = uhat0, k_min = 0.;
+        for (int n = 1; n <= nscan; ++n) {
+            const Real kk = kmax*n/nscan;
+            const Real u = uhat_of(kk);
+            if (u < uhat_min) { uhat_min = u; k_min = kk; }
+        }
+        amrex::Print() << "Continuum stability (WCA): Uhat(0) = " << uhat0
+                       << " Uhat min = " << uhat_min << " at |k| = " << k_min
+                       << " (discrete min over k != 0 = " << uhat_min_disc << ")\n";
+        if (uhat_min < 0.) {
+            const Real dcrit = -mu0*uhat_min;
+            amrex::Print() << "  D_crit = -mu0*min Uhat = " << dcrit
+                           << " D/D_crit = " << D/dcrit
+                           << ((D < dcrit) ? "  -> UNSTABLE" : "  -> STABLE")
+                           << ", selected wavelength = " << 2.*pi/k_min << "\n";
+        } else {
+            amrex::Print() << "  Uhat >= 0 everywhere, STABLE at any D\n";
+        }
+        if (rc/dxmin < 8.) {
+            amrex::Print() << "  WARNING: 2^(1/6)*ip_R/dx = " << rc/dxmin
+                           << " < 8; the WCA kernel is under-resolved\n";
         }
         return;
     } else {
