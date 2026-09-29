@@ -168,6 +168,18 @@ struct ParticleData {
         stochastic_particles->SetParticleDistributionMap(1, new_dm);
     }
 
+    // Write the particles into plotfile a_fname (subdirectory "particles"):
+    // id, cpu, position, and xold/yold/zold (the position at the start of the
+    // last step). ColorParticlesWithPhi, which overwrites zold with phi, is not
+    // called: in 3D zold is the old z position used by the reflux.
+    void writePlotFileParticles (const std::string& a_fname) const
+    {
+        if (use_particles) {
+            bool is_checkpoint = false;
+            stochastic_particles->Checkpoint(a_fname, "particles", is_checkpoint, particle_varnames);
+        }
+    }
+
     void writePlotFile (const std::string& a_fname, amrex::MultiFab const& phi_fine) const
     {
         if (use_particles) {

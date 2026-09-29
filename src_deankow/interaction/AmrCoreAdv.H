@@ -234,6 +234,9 @@ private:
     // 1 = particle dynamics only: skip the level-0 SPDE advance and its FFT
     // setup. Requires particles on a level 1 that covers the whole domain.
     int particles_only = 0;
+
+    // 1 = also write the particles into each plotfile (amr.plot_particles)
+    int plot_particles = 0;
     void CheckParticlesOnly () const;
 
     // optional piecewise-constant initial profile along x

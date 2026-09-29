@@ -133,6 +133,18 @@ adv.phierr = 10. 10.
 # *****************************************************************
 amr.plot_file  = plt_wca_   # root name of plot file
 amr.plot_int   = 10000      # every t = 1; if negative then no plot files
+# Plotfile mesh variables (levels 0 and 1):
+#   measure, phi0 : both phi, the density normalized to integrate to 1;
+#                   here the density per unit length in a realization is
+#                   rho = phi*num_part*dy = phi*640000
+#   number        : phi*cellvol*num_part, the particle count per cell
+# With amr.ref_ratio = 1 the plotfile writer stores level 1 refined by 2
+# (piecewise-constant copies), so level-1 "number" repeats each cell's count
+# in 2x2 sub-cells: sum it on level 0, or divide the level-1 sum by 4.
+amr.plot_particles = 1      # 1 = also write the particles into each plotfile,
+                            # in <plotfile>/particles (id, cpu, x, y, and
+                            # xold/yold/zold = position at the start of the step);
+                            # about 30 MB per plotfile at 640000 particles
 
 # *****************************************************************
 # Checkpoint name and frequency

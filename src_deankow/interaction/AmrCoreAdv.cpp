@@ -1158,6 +1158,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("regrid_int", regrid_int);
         pp.query("plot_file", plot_file);
         pp.query("plot_int", plot_int);
+        pp.query("plot_particles", plot_particles);
         pp.query("chk_file", chk_file);
         pp.query("chk_int", chk_int);
         pp.query("restart",restart_chkfile);
@@ -1629,6 +1630,9 @@ AmrCoreAdv::WritePlotFile () const
 
 #ifdef AMREX_PARTICLES
    //particleData.writePlotFile(plotfilename,phi_new[1]);
+   if (plot_particles) {
+       particleData.writePlotFileParticles(plotfilename);
+   }
 #endif
 }
 
