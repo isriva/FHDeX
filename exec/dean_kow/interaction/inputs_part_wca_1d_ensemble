@@ -10,8 +10,10 @@
 # Initial number density per unit length (per realization):
 #   0.15 on [0,400), 0.10 on [400,800), 0.15 on [800,1200)
 #   -> 60 + 40 + 60 = 160 particles per realization, 640000 in total.
-# Particles are seeded at random in each cell (int(rho*dx + rand) per cell), so
-# the count per realization fluctuates about 160 and pairs can start overlapping.
+# Particles are seeded with no two closer than the WCA cutoff (amr.part_init_min_sep
+# below), so the count per realization fluctuates about 160. The particle step is
+# not clamped, so dt must resolve the forces; with this seeding no pair starts
+# closer than 2^(1/6)a.
 # *****************************************************************
 
 # *****************************************************************
@@ -44,6 +46,18 @@ init_profile_val = 0.15  0.10  0.15
 
 # independent realizations along y
 is_ensemble_dir = 0 1
+
+# Initial seeding with a minimum separation along x (here the WCA cutoff
+# 2^(1/6)*a). Needs x as the only non-ensemble direction, x periodic, and level 1
+# covering the domain. Each realization: hard rods of this length, uniform over
+# non-overlapping configurations on the periodic line at the largest density
+# (0.15; Poisson count), then each particle kept with probability
+# rho(x)/0.15 from init_profile_x/_val. No pair is closer than the separation,
+# the mean density is exactly the profile, and the counts per segment are
+# slightly sub-Poisson (var/mean ~0.8 here). Independent of dx.
+# <= 0 = random per-cell seeding, int(num_part*phi*cellvol + rand) particles per
+# cell (dx dependent, and pairs can start overlapping).
+amr.part_init_min_sep = 1.122462048309373
 
 # *****************************************************************
 # Are we restarting from an existing checkpoint file?

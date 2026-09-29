@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <vector>
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_Math.H>
@@ -16,6 +17,145 @@ StochasticPC::InitParticles (MultiFab& phi_fine, Real num_part, PotentialParams 
     amrex::Print() << "calling InitParticles" << std::endl;
     amrex::Real factor = -1.;
     AddParticles(phi_fine, BoxArray{}, factor, num_part, pot);
+}
+
+// Seed particles for 1D realizations along x (x the only non-ensemble
+// direction), with no two particles in a realization closer than min_sep.
+//
+// The target density per unit length rho(x) is piecewise constant on the
+// segments of the initial profile (prof, or uniform if none), scaled so that the
+// expected total over all realizations is num_part. Each realization is built in
+// two steps:
+//  1. hard rods of length min_sep on the periodic line at the largest segment
+//     density rho_max: n ~ Poisson(rho_max*L) particles, uniform over the
+//     non-overlapping configurations (sorted uniforms u_i on [0, L - n*min_sep],
+//     x_i = u_i + i*min_sep, then a uniformly random rotation);
+//  2. thinning: each particle is kept with probability rho(x)/rho_max.
+// Thinning only widens gaps, so every pair stays >= min_sep apart, including
+// across the periodic wrap, and the expected density is rho(x) with no
+// artifacts at the segment boundaries. The count in a segment is then a thinned
+// hard-rod count, close to Poisson at low packing rho*min_sep.
+//
+// Each realization is generated on the rank owning its lowest-x box; the
+// caller must Redistribute afterwards.
+void
+StochasticPC::InitParticlesHardRod (MultiFab const& layout, Real num_part, Real min_sep,
+                                    InitProfile const& prof, GpuArray<int,3> const& ens)
+{
+    BL_PROFILE("StochasticPC::InitParticlesHardRod");
+    const int lev = 1;
+    const Geometry& geom = Geom(lev);
+    const Box domain = geom.Domain();
+    const auto plo = geom.ProbLoArray();
+    const auto phi = geom.ProbHiArray();
+    const auto dx  = geom.CellSizeArray();
+
+    if (ens[0]) { amrex::Abort("amr.part_init_min_sep: x must not be an ensemble direction"); }
+    int nreal = 1;
+    for (int d = 1; d < AMREX_SPACEDIM; ++d) {
+        if (!ens[d]) { amrex::Abort("amr.part_init_min_sep needs every direction but x in is_ensemble_dir"); }
+        nreal *= domain.length(d);
+    }
+    if (!geom.isPeriodic(0)) { amrex::Abort("amr.part_init_min_sep needs x periodic"); }
+
+    // segments along x
+    std::vector<Real> seg_lo, seg_hi, seg_w;
+    if (prof.nseg > 0) {
+        for (int s = 0; s < prof.nseg; ++s) {
+            const Real lo = (s == 0) ? plo[0] : prof.x[s-1];
+            const Real hi = (s == prof.nseg-1) ? phi[0] : prof.x[s];
+            if (hi > lo) { seg_lo.push_back(lo); seg_hi.push_back(hi); seg_w.push_back(prof.val[s]); }
+        }
+    } else {
+        seg_lo.push_back(plo[0]); seg_hi.push_back(phi[0]); seg_w.push_back(1.0);
+    }
+    Real wsum = 0.;
+    for (std::size_t s = 0; s < seg_w.size(); ++s) { wsum += seg_w[s]*(seg_hi[s] - seg_lo[s]); }
+    if (wsum <= 0.) { amrex::Abort("amr.part_init_min_sep: the initial profile is zero everywhere"); }
+    std::vector<Real> seg_rho(seg_w.size());
+    Real rho_max = 0.;
+    for (std::size_t s = 0; s < seg_w.size(); ++s) {
+        seg_rho[s] = num_part*seg_w[s]/(wsum*nreal);
+        rho_max = std::max(rho_max, seg_rho[s]);
+    }
+    if (rho_max*min_sep > 0.9) {
+        amrex::Abort("amr.part_init_min_sep: density times min_sep exceeds 0.9 in a segment");
+    }
+    const Real Lx = phi[0] - plo[0];
+    auto keep_prob = [&] (Real x) -> Real
+    {
+        for (std::size_t s = 0; s < seg_rho.size(); ++s) {
+            if (x >= seg_lo[s] && x < seg_hi[s]) { return seg_rho[s]/rho_max; }
+        }
+        return seg_rho.back()/rho_max;
+    };
+
+    Long n_redraw = 0;
+    for (MFIter mfi(layout); mfi.isValid(); ++mfi)
+    {
+        const Box bx = mfi.validbox() & domain;
+        if (bx.isEmpty() || bx.smallEnd(0) != domain.smallEnd(0)) { continue; }
+
+        std::vector<ParticleType> host;
+        std::vector<Real> u;
+#if (AMREX_SPACEDIM == 3)
+        for (int k = bx.smallEnd(2); k <= bx.bigEnd(2); ++k)
+#else
+        const int k = 0;
+#endif
+        for (int j = bx.smallEnd(1); j <= bx.bigEnd(1); ++j)
+        {
+            amrex::ignore_unused(k);
+            {
+                unsigned int n = amrex::RandomPoisson(rho_max*Lx);
+                while (n*min_sep > Lx) { n = amrex::RandomPoisson(rho_max*Lx); ++n_redraw; }
+                u.resize(n);
+                for (auto& v : u) { v = amrex::Random()*(Lx - n*min_sep); }
+                std::sort(u.begin(), u.end());
+                const Real shift = amrex::Random()*Lx;
+                for (unsigned int i = 0; i < n; ++i) {
+                    Real x = u[i] + i*min_sep + shift;
+                    x = plo[0] + (x - Lx*std::floor(x/Lx));
+                    if (amrex::Random() >= keep_prob(x)) { continue; }
+                    ParticleType p;
+                    p.id()  = 0; // set below
+                    p.cpu() = ParallelDescriptor::MyProc();
+                    p.pos(0) = static_cast<ParticleReal>(x);
+                    p.pos(1) = static_cast<ParticleReal>(plo[1] + (j + amrex::Random())*dx[1]);
+#if (AMREX_SPACEDIM == 3)
+                    p.pos(2) = static_cast<ParticleReal>(plo[2] + (k + amrex::Random())*dx[2]);
+#endif
+                    AMREX_D_TERM( p.rdata(RealIdx::xold) = p.pos(0);,
+                                  p.rdata(RealIdx::yold) = p.pos(1);,
+                                  p.rdata(RealIdx::zold) = p.pos(2););
+                    host.push_back(p);
+                }
+            }
+        }
+        if (host.empty()) { continue; }
+
+        Long id_start;
+#ifdef AMREX_USE_OMP
+#pragma omp critical (init_particles_next_id)
+#endif
+        {
+            id_start = ParticleType::NextID();
+            ParticleType::NextID(id_start + static_cast<Long>(host.size()));
+        }
+        for (std::size_t n = 0; n < host.size(); ++n) { host[n].id() = id_start + static_cast<Long>(n); }
+
+        auto& ptile = DefineAndReturnParticleTile(lev, mfi.index(), mfi.LocalTileIndex());
+        const auto old_size = ptile.GetArrayOfStructs().size();
+        ptile.resize(old_size + host.size());
+        Gpu::copyAsync(Gpu::hostToDevice, host.begin(), host.end(),
+                       ptile.GetArrayOfStructs().begin() + old_size);
+        Gpu::streamSynchronize();
+    }
+
+    ParallelDescriptor::ReduceLongSum(n_redraw);
+    amrex::Print() << "Seeded " << nreal << " realizations along x with minimum separation " << min_sep;
+    if (n_redraw > 0) { amrex::Print() << " (" << n_redraw << " Poisson redraws over capacity)"; }
+    amrex::Print() << "\n";
 }
 
 // TODO(3D): this aliases phi onto RealIdx::zold. In 2D zold is an unused spare
@@ -939,30 +1079,24 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 #endif
             }
 
-            totalx = std::max(-dx[0], std::min(dx[0], totalx));
-            totaly = std::max(-dx[1], std::min(dx[1], totaly));
-#if (AMREX_SPACEDIM == 3)
-            totalz = std::max(-dx[2], std::min(dx[2], totalz));
-#endif
-
+            // The step is not limited: resolving the forces is left to the
+            // choice of dt (and of a non-overlapping initial condition).
             p.pos(0) += static_cast<ParticleReal>(totalx);
             p.pos(1) += static_cast<ParticleReal>(totaly);
 #if (AMREX_SPACEDIM == 3)
             p.pos(2) += static_cast<ParticleReal>(totalz);
 #endif
 
+            // wrap into [p_lo, p_hi), also for a step longer than the box
             if (is_periodic_in_x) {
-                if (p.pos(0) < p_lo[0]) p.pos(0) += Lx;
-                if (p.pos(0) > p_hi[0]) p.pos(0) -= Lx;
+                p.pos(0) -= static_cast<ParticleReal>(Lx*std::floor((p.pos(0) - p_lo[0])/Lx));
             }
             if (is_periodic_in_y) {
-                if (p.pos(1) < p_lo[1]) p.pos(1) += Ly;
-                if (p.pos(1) > p_hi[1]) p.pos(1) -= Ly;
+                p.pos(1) -= static_cast<ParticleReal>(Ly*std::floor((p.pos(1) - p_lo[1])/Ly));
             }
 #if (AMREX_SPACEDIM == 3)
             if (is_periodic_in_z) {
-                if (p.pos(2) < p_lo[2]) p.pos(2) += Lz;
-                if (p.pos(2) > p_hi[2]) p.pos(2) -= Lz;
+                p.pos(2) -= static_cast<ParticleReal>(Lz*std::floor((p.pos(2) - p_lo[2])/Lz));
             }
 #endif
         });

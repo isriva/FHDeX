@@ -30,6 +30,11 @@ struct ParticleData {
 
         pot = a_pot;
 
+        // > 0: seed the initial particles with this minimum separation along x
+        // (StochasticPC::InitParticlesHardRod) instead of at random per cell
+        part_init_min_sep = 0.0;
+        pp.query("part_init_min_sep", part_init_min_sep);
+
         // ensemble directions: see StochasticPC::AdvectParticles
         {
             amrex::ParmParse pp_top;
@@ -111,7 +116,15 @@ struct ParticleData {
             // **********************************************************************
             // Use this grown boxArray to hold the particles
             // **********************************************************************
-            stochastic_particles->InitParticles(phi_grown, num_part, pot);
+            if (part_init_min_sep > 0.0) {
+                if (!phi_fine.boxArray().contains(geom_fine.Domain())) {
+                    amrex::Abort("amr.part_init_min_sep needs level 1 to cover the whole domain");
+                }
+                stochastic_particles->InitParticlesHardRod(phi_grown, num_part, part_init_min_sep,
+                                                           init_profile, ensemble_dir);
+            } else {
+                stochastic_particles->InitParticles(phi_grown, num_part, pot);
+            }
 
             amrex::Print() << "Before Removal we have  " << stochastic_particles->TotalNumberOfParticles() <<
                               " stochastic particles." << std::endl;
@@ -333,6 +346,8 @@ struct ParticleData {
     int use_particles;
     PotentialParams pot;
     amrex::GpuArray<int,3> ensemble_dir = {0, 0, 0};
+    amrex::Real part_init_min_sep = 0.0;
+    InitProfile init_profile;   // set by AmrCoreAdv from init_profile_x/_val
     std::unique_ptr<StochasticPC> stochastic_particles;
     amrex::Vector<std::string> particle_varnames = {"xold", "yold", "zold"};
 };

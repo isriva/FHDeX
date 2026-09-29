@@ -4,6 +4,7 @@
 #include <AMReX_NeighborParticles.H>
 
 #include "Potentials.H"
+#include "InitProfile.H"
 
 struct RealIdx
 {
@@ -70,6 +71,12 @@ public:
 
     void InitParticles (amrex::MultiFab& phi_fine, amrex::Real num_part,
                         PotentialParams const& pot);
+
+    // Seed each realization (row of cells along the ensemble directions) in
+    // 1D along x with no two particles closer than min_sep; see the .cpp
+    void InitParticlesHardRod (amrex::MultiFab const& layout, amrex::Real num_part,
+                               amrex::Real min_sep, InitProfile const& prof,
+                               amrex::GpuArray<int,3> const& ens);
     void  AddParticles (amrex::MultiFab& phi_fine, const amrex::BoxArray& ba_to_exclude,
                         amrex::Real factor, amrex::Real num_part,
                         PotentialParams const& pot);

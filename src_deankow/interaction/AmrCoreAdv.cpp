@@ -1177,6 +1177,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
     read_potential_params(pot);
 
 #ifdef AMREX_PARTICLES
+        particleData.init_profile = init_profile;
         particleData.init_particle_params(max_level, pot);
 #endif
 }

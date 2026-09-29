@@ -13,7 +13,7 @@
 #include <AMReX_FFT.H>
 
 #include "Potentials.H"
-#include "mykernel.H"
+#include "InitProfile.H"
 
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
