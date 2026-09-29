@@ -522,13 +522,15 @@ void main_driver(const char* argv)
     Vector<Real> var_scaling_prim;
     var_scaling_prim.resize(structVarsPrim*(structVarsPrim+1)/2);
     for (int d=0; d<var_scaling_prim.size(); ++d) {
-        var_scaling_prim[d] = Real(1.)/(dx[0]*dx[1]*dx[2]);
+        if (scale_SF_with_dVol) var_scaling_prim[d] = Real(1.)/(dx[0]*dx[1]*dx[2]);
+        else var_scaling_prim[d] = Real(1.);
     }
     Vector<Real> var_scaling_cons;
     // scale SF results by inverse cell volume
     var_scaling_cons.resize(structVarsCons*(structVarsCons+1)/2);
     for (int d=0; d<var_scaling_cons.size(); ++d) {
-        var_scaling_cons[d] = Real(1.)/(dx[0]*dx[1]*dx[2]);
+        if (scale_SF_with_dVol) var_scaling_cons[d] = Real(1.)/(dx[0]*dx[1]*dx[2]);
+        else var_scaling_cons[d] = Real(1.);
     }
 
     Vector<Real> surfcov_var_scaling;

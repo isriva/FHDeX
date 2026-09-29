@@ -13,6 +13,7 @@ AMREX_GPU_MANAGED bool compressible::do_reservoir = false;
 AMREX_GPU_MANAGED amrex::Real compressible::zeta_ratio = -1.0;
 AMREX_GPU_MANAGED int compressible::dirichlet_type = 1;
 AMREX_GPU_MANAGED bool compressible::constant_transport = false;
+AMREX_GPU_MANAGED bool compressible::scale_SF_with_dVol = true;
 
 void InitializeCompressibleNamespace()
 {
@@ -105,6 +106,17 @@ void InitializeCompressibleNamespace()
     constant_transport = (const_trans == 1);
     if (constant_transport) {
         amrex::Print() << "constant transport chosen\n";
+    }
+
+    // constant transport: no spatial or temporal variation of transport coefficients
+    int scale_SF = 1;
+    pp.query("scale_SF_with_dVol",scale_SF);
+    if ((scale_SF != 0) and (scale_SF != 1)) {
+        amrex::Abort("scale_SF_with_dVol must be 0 or 1");
+    }
+    scale_SF_with_dVol = (scale_SF == 1);
+    if (!scale_SF_with_dVol) {
+        amrex::Print() << "Structure factor are not being scaled by dVol \n";
     }
 
     return;
