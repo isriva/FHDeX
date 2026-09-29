@@ -30,6 +30,26 @@ struct ParticleData {
 
         pot = a_pot;
 
+        // ensemble directions: see StochasticPC::AdvectParticles
+        {
+            amrex::ParmParse pp_top;
+            amrex::Vector<int> ens(AMREX_SPACEDIM, 0);
+            pp_top.queryarr("is_ensemble_dir", ens, 0, AMREX_SPACEDIM);
+            int n_ens = 0;
+            for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+                ensemble_dir[idim] = (ens[idim] != 0);
+                n_ens += ensemble_dir[idim];
+            }
+            if (n_ens == AMREX_SPACEDIM) {
+                amrex::Abort("is_ensemble_dir cannot be set in every direction");
+            }
+            if (n_ens > 0) {
+                amrex::Print() << "Particle ensemble directions: is_ensemble_dir ="
+                               << AMREX_D_TERM(" " << ensemble_dir[0], << " " << ensemble_dir[1], << " " << ensemble_dir[2])
+                               << " (no motion, and interactions only within a cell, along these)\n";
+            }
+        }
+
         if (use_particles) {
             if (max_level != 1) {
                 amrex::Abort("When using particles you must have max_level == 1");
@@ -214,7 +234,7 @@ struct ParticleData {
             // **********************************************************************
             // Apply deterministic drift from external and interaction potentials
             // **********************************************************************
-            stochastic_particles->AdvectParticles(lev, dt_lev, pot, num_part, diff_coeff);
+            stochastic_particles->AdvectParticles(lev, dt_lev, pot, num_part, diff_coeff, ensemble_dir);
 
             // **********************************************************************
             // Advect the particles in the valid region and in the ghost region
@@ -300,6 +320,7 @@ struct ParticleData {
 
     int use_particles;
     PotentialParams pot;
+    amrex::GpuArray<int,3> ensemble_dir = {0, 0, 0};
     std::unique_ptr<StochasticPC> stochastic_particles;
     amrex::Vector<std::string> particle_varnames = {"xold", "yold", "zold"};
 };

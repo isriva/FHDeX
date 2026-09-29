@@ -565,10 +565,22 @@ void
 StochasticPC::AdvectParticles (int lev, Real dt,
                                PotentialParams const& pot,
                                Real num_part,
-                               Real diff_coeff)
+                               Real diff_coeff,
+                               GpuArray<int,3> const& ens)
 {
     BL_PROFILE("StochasticPC::AdvectParticles");
     const auto dx = Geom(lev).CellSizeArray();
+    const auto dxi = Geom(lev).InvCellSizeArray();
+
+    // Ensemble directions (ens[d] = 1): particles do not move along d, and only
+    // particles in the same cell along d interact, through their separation in
+    // the other directions. Each row of cells is then an independent realization.
+    // Cell index of a position along direction d:
+    const auto ens_plo = Geom(lev).ProbLoArray();
+    auto ens_cell = [=] AMREX_GPU_HOST_DEVICE (Real x, int d) noexcept -> int
+    {
+        return static_cast<int>(std::floor((x - ens_plo[d])*dxi[d]));
+    };
     const auto p_lo = Geom(lev).ProbLoArray();
     const auto p_hi = Geom(lev).ProbHiArray();
 
@@ -587,6 +599,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
     if (interaction_range > 0.0) {
         Real Lmin = std::numeric_limits<Real>::max();
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
+            if (ens[idim]) { continue; }
             const Real L = p_hi[idim] - p_lo[idim];
             Lmin = std::min(Lmin, L);
         }
@@ -690,6 +703,11 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                 }
 #endif
 
+                AMREX_D_TERM(
+                    if (ens[0]) { if (ens_cell(p1.pos(0),0) != ens_cell(p2.pos(0),0)) { return false; } dxij = 0.0; },
+                    if (ens[1]) { if (ens_cell(p1.pos(1),1) != ens_cell(p2.pos(1),1)) { return false; } dyij = 0.0; },
+                    if (ens[2]) { if (ens_cell(p1.pos(2),2) != ens_cell(p2.pos(2),2)) { return false; } dzij = 0.0; });
+
                 const Real r2 = dxij*dxij + dyij*dyij + dzij*dzij;
                 return (r2 < rcut2 && r2 > 0.0);
             };
@@ -765,6 +783,11 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                     }
 #endif
 
+                    AMREX_D_TERM(
+                        if (ens[0]) { if (ens_cell(q.pos(0),0) != ens_cell(xi,0)) continue; dxij = 0.0; },
+                        if (ens[1]) { if (ens_cell(q.pos(1),1) != ens_cell(yi,1)) continue; dyij = 0.0; },
+                        if (ens[2]) { if (ens_cell(q.pos(2),2) != ens_cell(zi,2)) continue; dzij = 0.0; });
+
                     const Real r2 = dxij*dxij + dyij*dyij + dzij*dzij;
                     if (r2 >= rcut2 || r2 == 0.0) continue;
 
@@ -785,6 +808,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 #if (AMREX_SPACEDIM == 3)
             incz = amrex::RandomNormal(0.,stddev,engine);
 #endif
+
+            if (ens[0]) { dpx = 0.0; incx = 0.0; }
+            if (ens[1]) { dpy = 0.0; incy = 0.0; }
+            if (ens[2]) { dpz = 0.0; incz = 0.0; }
 
             dpxp[i] = dpx;
             dpyp[i] = dpy;
@@ -830,6 +857,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 #if (AMREX_SPACEDIM == 3)
             incz = amrex::RandomNormal(0., stddev, engine);
 #endif
+
+            if (ens[0]) { dpx = 0.0; incx = 0.0; }
+            if (ens[1]) { dpy = 0.0; incy = 0.0; }
+            if (ens[2]) { dpz = 0.0; incz = 0.0; }
 
             dpxp[i]  = dpx;
             dpyp[i]  = dpy;

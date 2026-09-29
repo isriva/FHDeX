@@ -13,6 +13,7 @@
 #include <AMReX_FFT.H>
 
 #include "Potentials.H"
+#include "mykernel.H"
 
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
@@ -226,6 +227,12 @@ private:
     // fraction of the explicit (forward Euler) stability limit used for dt;
     // see EstTimeStep
     amrex::Real cfl = 0.7;
+
+    // if > 0, used as the time step instead of the cfl estimate
+    amrex::Real fixed_dt = -1.;
+
+    // optional piecewise-constant initial profile along x
+    InitProfile init_profile;
 
     // how often each level regrids the higher levels of refinement
     // (after a level advances that many time steps)

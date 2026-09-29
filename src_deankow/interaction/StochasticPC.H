@@ -79,7 +79,8 @@ public:
     void AdvectParticles (int lev, amrex::Real dt,
                           PotentialParams const& pot,
                           amrex::Real num_part,
-                          amrex::Real diff_coeff);
+                          amrex::Real diff_coeff,
+                          amrex::GpuArray<int,3> const& ens);
 
     void AdvectWithRandomWalk (int lev, amrex::Real dt, amrex::Real diff_coeff);
 

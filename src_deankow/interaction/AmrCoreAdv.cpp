@@ -432,10 +432,11 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
             const Box& vbx = mfi.validbox();
             auto const& phi_arr = phi_new[lev].array(mfi);
             auto npts_scale_local = npts_scale;
+            const InitProfile prof = init_profile;
             amrex::ParallelFor(vbx,
             [=] AMREX_GPU_DEVICE(int i, int j, int k)
             {
-                init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp);
+                init_phi(i,j,k,phi_arr,dx,problo,npts_scale_local,Ncomp,prof);
             });
         }
 
@@ -1097,6 +1098,31 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
 
         seed = 0;
         pp.queryAdd("seed", seed);
+
+        // optional piecewise-constant initial profile along x
+        std::vector<Real> prof_x, prof_val;
+        pp.queryarr("init_profile_x", prof_x);
+        pp.queryarr("init_profile_val", prof_val);
+        if (!prof_val.empty()) {
+            const int nseg = static_cast<int>(prof_val.size());
+            if (nseg > InitProfile::max_seg) {
+                amrex::Abort("init_profile_val has more than " + std::to_string(InitProfile::max_seg) + " values");
+            }
+            if (static_cast<int>(prof_x.size()) != nseg-1) {
+                amrex::Abort("init_profile_x must have one fewer entry than init_profile_val");
+            }
+            init_profile.nseg = nseg;
+            for (int n = 0; n < nseg; ++n) {
+                if (prof_val[n] < 0.) { amrex::Abort("init_profile_val must be non-negative"); }
+                init_profile.val[n] = prof_val[n];
+            }
+            for (int n = 0; n < nseg-1; ++n) {
+                if (n > 0 && prof_x[n] <= prof_x[n-1]) { amrex::Abort("init_profile_x must be increasing"); }
+                init_profile.x[n] = prof_x[n];
+            }
+        } else if (!prof_x.empty()) {
+            amrex::Abort("init_profile_x given without init_profile_val");
+        }
     }
 
     {
@@ -1114,6 +1140,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         ParmParse pp("adv");
 
         pp.query("cfl", cfl);
+        pp.query("fixed_dt", fixed_dt);
         pp.query("do_reflux", do_reflux);
         pp.query("do_subcycle", do_subcycle);
     }
@@ -1386,6 +1413,9 @@ AmrCoreAdv::ComputeDt ()
         n_factor *= nsubsteps[lev];
         dt_0 = std::min(dt_0, n_factor*dt_tmp[lev]);
     }
+
+    // a fixed dt overrides the stability estimate; its stability is the user's responsibility
+    if (fixed_dt > 0.) { dt_0 = fixed_dt; }
 
     // Limit dt's by the value of stop_time.
     const Real eps = 1.e-3*dt_0;

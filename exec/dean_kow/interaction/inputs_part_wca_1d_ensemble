@@ -1,0 +1,128 @@
+# *****************************************************************
+# 1D Brownian dynamics of WCA particles (eps = 1, a = 1, kT = D = 1),
+# run as 4000 independent realizations stacked along y.
+#
+#   x: the physical 1D periodic domain, L = 1200, one cell per unit length
+#   y: 4000 rows of cells, one realization per row. With is_ensemble_dir = 0 1
+#      particles do not move in y and interact only with particles in the same
+#      row, through their x separation.
+#
+# Initial number density per unit length (per realization):
+#   0.15 on [0,400), 0.10 on [400,800), 0.15 on [800,1200)
+#   -> 60 + 40 + 60 = 160 particles per realization, 640000 in total.
+# Particles are seeded at random in each cell (int(rho*dx + rand) per cell), so
+# the count per realization fluctuates about 160 and pairs can start overlapping.
+# *****************************************************************
+
+# *****************************************************************
+# Run until nsteps == max_step or time == stop_time,
+#     whichever comes first
+# *****************************************************************
+max_step  = 1000000         # t = 100 at dt = 1e-4
+#stop_time = 100.
+
+seed = 0
+
+amrex.fpe_trap_invalid = 1
+
+# *****************************************************************
+# Specific to this application
+# *****************************************************************
+diff_coeff = 1.             # D; the particle mobility is 1, so kT = D = 1
+alg_type   = 0
+dorand     = 1.
+
+# Total number of particles, and the particle weight: the pair force is
+# divided by num_part (StochasticPC::AdvectParticles), so amr.ip_eps below is
+# set to num_part to give a WCA pair strength of eps = 1.
+num_part = 640000.
+
+# Piecewise-constant initial density along x (breakpoints, then values);
+# only the shape matters, phi is renormalized and num_part sets the total
+init_profile_x   = 400.  800.
+init_profile_val = 0.15  0.10  0.15
+
+# independent realizations along y
+is_ensemble_dir = 0 1
+
+# *****************************************************************
+# Are we restarting from an existing checkpoint file?
+# *****************************************************************
+#amr.restart  = chk100000 # restart from this checkpoint file
+
+# *****************************************************************
+# Problem size and geometry
+# *****************************************************************
+geometry.prob_lo     =    0.0     0.0
+geometry.prob_hi     = 1200.0  4000.0
+geometry.is_periodic =    1       1
+
+# *****************************************************************
+# VERBOSITY
+# *****************************************************************
+amr.v              = 1       # verbosity in Amr
+
+# *****************************************************************
+# Resolution and refinement
+# *****************************************************************
+# dx = dy = 1: along x one cell per unit length; along y one cell per realization
+amr.n_cell          = 1200 4000
+amr.max_grid_size_x = 200 200
+amr.max_grid_size_y = 200 200
+
+# particles live on level 1, which covers the whole domain (Tagging.H tags
+# every cell) at the same resolution
+amr.max_level       = 1
+amr.ref_ratio       = 1
+amr.use_particles   = 1      # Turn particles on or off
+
+# Interaction potential: WCA
+#   U = 4*eps*((a/r)^12 - (a/r)^6) + eps for r < 2^(1/6)*a, 0 otherwise
+amr.use_int_pot     = 1
+amr.ip_type         = wca
+amr.ip_eps          = 640000.  # = num_part, i.e. eps = 1 per pair
+amr.ip_R            = 1.       # a
+#amr.ip_range       = 1.122462 # defaults to the WCA cutoff 2^(1/6)*a
+amr.ip_wca_rcap     = 0.8      # caps only the level-0 SPDE mesh kernel
+amr.ip_wca_cap_part = 0        # 0 = exact WCA force on the particles
+
+amr.use_ext_pot     = 0
+
+# *****************************************************************
+# Control of grid creation
+# *****************************************************************
+amr.blocking_factor_x = 2
+amr.blocking_factor_y = 2
+
+amr.regrid_int      = 100000000  # never regrid
+
+amr.n_error_buf = 0 0
+amr.grid_eff = 0.96
+
+# *****************************************************************
+# Time step control
+# *****************************************************************
+adv.fixed_dt       = 1.e-4   # overrides the cfl estimate
+adv.cfl            = 0.03125 # unused with adv.fixed_dt
+
+# *****************************************************************
+# Should we reflux at coarse-fine boundaries?
+# *****************************************************************
+adv.do_reflux = 1
+
+# *****************************************************************
+# Tagging: needs a level-1 entry; Tagging.H tags every cell regardless
+# *****************************************************************
+adv.phierr = 10. 10.
+
+# *****************************************************************
+# Plotfile name and frequency
+# *****************************************************************
+amr.plot_file  = plt_wca_   # root name of plot file
+amr.plot_int   = 10000      # every t = 1; if negative then no plot files
+
+# *****************************************************************
+# Checkpoint name and frequency
+# *****************************************************************
+amr.chk_file = chk      # root name of checkpoint file
+amr.chk_int  = 100000   # if negative then no checkpoint files

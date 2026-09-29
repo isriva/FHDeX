@@ -4,12 +4,24 @@
 #include <AMReX_FArrayBox.H>
 #include "Potentials.H"
 
+// Optional piecewise-constant initial profile along x, read from init_profile_x
+// (n-1 breakpoints) and init_profile_val (n values). Only the shape matters:
+// phi is renormalized to integrate to 1 after init_phi.
+struct InitProfile
+{
+    static constexpr int max_seg = 16;
+    int         nseg = 0;   // 0 = use the default initial condition
+    amrex::Real x[max_seg-1] = {};
+    amrex::Real val[max_seg] = {};
+};
+
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void init_phi (int i, int j, int k,
                amrex::Array4<amrex::Real> const& phi,
                amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& dx,
                amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& prob_lo,
-               amrex::Real /*npts_scale*/, int Ncomp)
+               amrex::Real /*npts_scale*/, int Ncomp,
+               InitProfile const& prof)
 {
     constexpr double  PI = 3.14159265358979323846264338327950288;
     using amrex::Real;;
@@ -23,6 +35,12 @@ void init_phi (int i, int j, int k,
 //     phi(i,j,k,0) += std::cos(2.*PI*(i)*dx[0])*std::cos(2.*PI*(j)*dx[1])/cellvol;
      //phi(i,j,k,0) += std::cos(16.*2.*PI*(i)*dx[0])*std::cos(16*2.*PI*j*dx[1])/cellvol;
      phi(i,j,k,0) = 20480.;
+     if (prof.nseg > 0) {
+         const Real xc = prob_lo[0] + (i + 0.5)*dx[0];
+         int s = 0;
+         while (s < prof.nseg-1 && xc >= prof.x[s]) { ++s; }
+         phi(i,j,k,0) = prof.val[s];
+     }
 //     phi(i,j,k,0) += std::sin(2.*PI*(i)*dx[0])*1024;
 //     phi(i,j,k,0) += std::cos(8.*PI*(i)*dx[0]+.7)*std::cos(10.*PI*(j)*dx[1]-.3)*1024;
 //     phi(i,j,k,0) += std::cos(2.*3.14156265*(i+0.5)*dx[0])*std::cos(2.*3.14156265*(j+0.5)*dx[1])*256.;
