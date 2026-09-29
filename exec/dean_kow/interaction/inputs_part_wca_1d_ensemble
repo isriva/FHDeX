@@ -106,6 +106,19 @@ adv.fixed_dt       = 1.e-4   # overrides the cfl estimate
 adv.cfl            = 0.03125 # unused with adv.fixed_dt
 
 # *****************************************************************
+# Particle dynamics only
+# *****************************************************************
+# 1 = skip the level-0 SPDE (Dean-Kawasaki) advance, its flux-register reflux,
+# and the FFT setup of the interaction kernel (no Uhat or continuum stability
+# printout). Level 0 then just holds the particle density, averaged down from
+# level 1 every step. Only valid when level 1 covers the whole domain, as here;
+# the code aborts otherwise. Without adv.fixed_dt, dt still comes from the
+# grid diffusion limit cfl*2/(D*sum_d 4/dx_d^2).
+# 0 = also advance the SPDE on level 0 each step (its result is overwritten
+# from the particles when level 1 covers the domain, so it only costs time).
+adv.particles_only = 1
+
+# *****************************************************************
 # Should we reflux at coarse-fine boundaries?
 # *****************************************************************
 adv.do_reflux = 1

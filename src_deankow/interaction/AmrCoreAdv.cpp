@@ -231,8 +231,32 @@ AmrCoreAdv::InitData ()
         ReadCheckpointFile();
         InitFFTLevel0();
     }
+    CheckParticlesOnly();
+    if (particles_only) {
+        amrex::Print() << "adv.particles_only = 1: particle dynamics only, no level-0 SPDE solve\n";
+    }
+
     if (plot_int > 0) {
         WritePlotFile();
+    }
+}
+
+// adv.particles_only drops the level-0 SPDE, which is only valid when every
+// cell is advanced by the particles
+void
+AmrCoreAdv::CheckParticlesOnly () const
+{
+    if (!particles_only) { return; }
+#ifdef AMREX_PARTICLES
+    const bool have_particles = particleData.use_particles;
+#else
+    const bool have_particles = false;
+#endif
+    if (!have_particles || finest_level != 1) {
+        amrex::Abort("adv.particles_only = 1 needs amr.use_particles = 1 and a level 1");
+    }
+    if (!grids[1].contains(Geom(1).Domain())) {
+        amrex::Abort("adv.particles_only = 1 needs level 1 to cover the whole domain");
     }
 }
 
@@ -474,6 +498,9 @@ void AmrCoreAdv::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& ba
 void
 AmrCoreAdv::InitFFTLevel0 ()
 {
+    // no mesh kernel, FFT plans or SPDE stability analysis without the SPDE
+    if (particles_only) { return; }
+
     const int lev = 0;
     const auto& ba = phi_new[lev].boxArray();
     const auto& dm = phi_new[lev].DistributionMap();
@@ -1141,6 +1168,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
 
         pp.query("cfl", cfl);
         pp.query("fixed_dt", fixed_dt);
+        pp.query("particles_only", particles_only);
         pp.query("do_reflux", do_reflux);
         pp.query("do_subcycle", do_subcycle);
     }
@@ -1323,6 +1351,7 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
         {
             amrex::Print() << "Regridding at step " << istep[0] << std::endl;
             regrid(0, time);
+            CheckParticlesOnly();
 
             AverageDown();
 
@@ -1344,10 +1373,16 @@ AmrCoreAdv::timeStepNoSubcycling (Real time, int iteration)
        amrex::Print() << "ADVANCE with time = " << t_new[lev] << " dt = " << dt[0] << std::endl;
     }
 
-    AdvancePhiAtLevel(lev, time, dt[lev], iteration, nsub);
+    if (particles_only) {
+        // no SPDE: level 0 is entirely covered by the particle level and is
+        // reset from it by AverageDown below; carry phi over until then
+        MultiFab::Copy(phi_new[lev], phi_old[lev], 0, 0, phi_new[lev].nComp(), phi_new[lev].nGrow());
+    } else {
+        AdvancePhiAtLevel(lev, time, dt[lev], iteration, nsub);
 
-    if (finest_level > 0) {
-        flux_reg[lev+1]->Reflux(phi_new[lev], 1.0, 0, 0, phi_new[lev].nComp(), geom[lev]);
+        if (finest_level > 0) {
+            flux_reg[lev+1]->Reflux(phi_new[lev], 1.0, 0, 0, phi_new[lev].nComp(), geom[lev]);
+        }
     }
 
     if (Verbose()) {

@@ -231,6 +231,11 @@ private:
     // if > 0, used as the time step instead of the cfl estimate
     amrex::Real fixed_dt = -1.;
 
+    // 1 = particle dynamics only: skip the level-0 SPDE advance and its FFT
+    // setup. Requires particles on a level 1 that covers the whole domain.
+    int particles_only = 0;
+    void CheckParticlesOnly () const;
+
     // optional piecewise-constant initial profile along x
     InitProfile init_profile;
 
