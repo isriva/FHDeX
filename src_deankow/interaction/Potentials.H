@@ -24,9 +24,10 @@ enum IntPotType : int {
     HK   = 1,  // U = ip_eps*ip_R*(1-(r/ip_R)^2) for r < ip_R, 0 otherwise
     MORSE = 2, // generalized Morse: U = -ip_eps_att*exp(-(r-ip_re)/ip_R_att)
                //                        + ip_eps_rep*exp(-(r-ip_re)/ip_R_rep)
-    WCA  = 3   // U = 4*ip_eps*((ip_R/r)^12 - (ip_R/r)^6) + ip_eps for r < 2^(1/6)*ip_R,
+    WCA  = 3,  // U = 4*ip_eps*((ip_R/r)^12 - (ip_R/r)^6) + ip_eps for r < 2^(1/6)*ip_R,
                // 0 otherwise. The mesh kernel holds U(r) at U(ip_wca_rcap*ip_R) for
                // smaller r; the particle force is uncapped unless ip_wca_cap_part = 1
+    GAUSS = 4  // Gaussian: U = ip_eps*exp(-r^2/ip_R^2)
 };
 
 // Below this separation the Morse pair force is set to zero: dU/dr does not
@@ -78,6 +79,11 @@ amrex::Real ip_U (amrex::Real r, PotentialParams const& pot) noexcept
         const amrex::Real s6 = s2*s2*s2;
         return 4.0 * pot.ip_eps * (s6*s6 - s6) + pot.ip_eps;
     }
+    case IntPotType::GAUSS:
+    {
+        const amrex::Real s = r/pot.ip_R;
+        return pot.ip_eps * std::exp(-s*s);
+    }
     case IntPotType::HK:
     {
         if (r >= pot.ip_R) { return 0.0; }
@@ -115,6 +121,12 @@ amrex::Real ip_dUdr_over_r (amrex::Real r, PotentialParams const& pot) noexcept
         const amrex::Real s6 = s2*s2*s2;
         return -24.0 * pot.ip_eps * (2.0*s6*s6 - s6) / (r*r);
     }
+    case IntPotType::GAUSS:
+    {
+        // dU/dr = -2 r/ip_R^2 U, so (dU/dr)/r is finite at r = 0
+        const amrex::Real R2 = pot.ip_R*pot.ip_R;
+        return -2.0 * pot.ip_eps * std::exp(-r*r/R2) / R2;
+    }
     case IntPotType::HK:
         return (r < pot.ip_R) ? -2.0 * pot.ip_eps / pot.ip_R : 0.0;
     case IntPotType::GEMA:
@@ -127,7 +139,7 @@ amrex::Real ip_dUdr_over_r (amrex::Real r, PotentialParams const& pot) noexcept
 }
 
 // Magnitude scale of U: max |U| sampled on [0, rmax]. This is |U(0)| for the
-// monotone kernels (gema, hk, wca); for morse it also sees the well.
+// monotone kernels (gema, hk, wca, gauss); for morse it also sees the well.
 inline amrex::Real ip_Uscale (PotentialParams const& pot, amrex::Real rmax)
 {
     constexpr int nsamp = 4096;
@@ -165,8 +177,10 @@ inline void read_potential_params (PotentialParams& pot)
         pot.ip_type = IntPotType::MORSE;
     } else if (ip_type_name == "wca") {
         pot.ip_type = IntPotType::WCA;
+    } else if (ip_type_name == "gauss") {
+        pot.ip_type = IntPotType::GAUSS;
     } else {
-        amrex::Abort("Unknown amr.ip_type = " + ip_type_name + "; valid types are: gema, hk, morse, wca");
+        amrex::Abort("Unknown amr.ip_type = " + ip_type_name + "; valid types are: gema, hk, morse, wca, gauss");
     }
     pp.query("ip_eps", pot.ip_eps);
     pp.query("ip_R", pot.ip_R);
@@ -212,6 +226,11 @@ inline void read_potential_params (PotentialParams& pot)
     if (pot.use_int_pot && pot.ip_type == IntPotType::WCA && pot.ip_range <= 0.0) {
         pot.ip_range = ip_wca_rc*pot.ip_R;
     }
+    // The Gaussian has no compact support; by default cut it where U has
+    // dropped to 1e-5 of |U(0)|, a factor of 10 inside the truncation check below
+    if (pot.use_int_pot && pot.ip_type == IntPotType::GAUSS && pot.ip_range <= 0.0) {
+        pot.ip_range = pot.ip_R*std::sqrt(std::log(1.e5));
+    }
     if (pot.use_ext_pot && pot.ep_gamma <= 0.0) {
         amrex::Abort("amr.ep_gamma must be positive");
     }
@@ -243,7 +262,7 @@ inline void read_potential_params (PotentialParams& pot)
                    << " ep_gamma = " << pot.ep_gamma << "\n";
 
     // Size of the potential dropped by the particle cutoff, relative to the
-    // scale of U (|U(0)| for gema, hk and wca)
+    // scale of U (|U(0)| for gema, hk, wca and gauss)
     if (pot.use_int_pot && pot.ip_type == IntPotType::MORSE) {
         // range at which the attractive tail drops to 1e-5 of the scale, a
         // factor of 10 inside the 1e-4 truncation limit below

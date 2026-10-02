@@ -555,7 +555,7 @@ AmrCoreAdv::InitFFTLevel0 ()
                 reduce_op_max.eval(bx, reduce_data_max,
                 [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
                 {
-                    // U at the r = 0 cell; the kernel's peak for gema, hk and wca
+                    // U at the r = 0 cell; the kernel's peak for gema, hk, wca and gauss
                     // but not for morse, whose U(0) is below its tail
                     const bool origin = (i == 0 && j == 0 && k == 0);
                     return ReduceTuple{origin ? U_arr(i,j,k) : std::numeric_limits<Real>::lowest()};
@@ -866,6 +866,20 @@ PrintContinuumStability (PotentialParams const& pot, Real mu0, Real D, Real dxmi
                            << " < 8; the WCA kernel is under-resolved\n";
         }
         return;
+    } else if (pot.ip_type == IntPotType::GAUSS) {
+        // Uhat(k) = eps*(pi R^2)^(d/2)*exp(-k^2 R^2/4): one-signed, so for
+        // eps > 0 every mode is stable, and for eps < 0 the most unstable mode
+        // is k -> 0 (demixing), handled by the attractive check below
+        uhat0 = eps*std::pow(pi*R*R, d/2.);
+        amrex::Print() << "Continuum stability (GAUSS): Uhat(0) = " << uhat0
+                       << " (discrete min over k != 0 = " << uhat_min_disc << ")\n";
+        if (eps >= 0.) {
+            amrex::Print() << "  repulsive: Uhat > 0 everywhere, STABLE at any D\n";
+        }
+        if (R/dxmin < 4.) {
+            amrex::Print() << "  WARNING: ip_R/dx = " << R/dxmin
+                           << " < 4; the Gaussian kernel is under-resolved\n";
+        }
     } else {
         // Uhat(0) = eps * 2 pi^(d/2)/Gamma(d/2) * R^d/alpha * Gamma(d/alpha)
         const Real alpha = pot.ip_alpha;
