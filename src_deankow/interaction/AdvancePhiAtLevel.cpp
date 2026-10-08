@@ -149,12 +149,16 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
 
     C.FillBoundary(Geom(lev).periodicity());
 
+    // face drift velocity of this step, for the time step and the diagnostics
+    if (NeedDriftMeasurement()) { MeasureDrift(lev); }
+
     phi_old[lev].FillBoundary(Geom(lev).periodicity());
 
     // We do this here so we can print the FABs for debugging
     phi_new[lev].setVal(0.0);
 
-    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs, pot);
+    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs, pot,
+                noise_avg_type, drift_flux_type);
 
     // Increment or decrement the flux registers by area and time-weighted fluxes
     // Note that the fluxes have already been scaled by dt and area
