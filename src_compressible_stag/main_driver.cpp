@@ -78,7 +78,7 @@ void main_driver(const char* argv)
 #endif
 
     int step_start, statsCount;
-    amrex::Real time;
+    double time; // kept in double so that time + dt does not lose dt to float rounding
 
     // if gas heat capacities in the namelist are negative, calculate them using using dofs.
     // This will only update the Fortran values.
@@ -293,6 +293,9 @@ void main_driver(const char* argv)
     int ncross = 37+nspecies+3;
     MultiFab spatialCrossMF;
     Vector<Real> spatialCrossVec(n_cells[0]*ncross, 0.0);
+
+    // Kahan compensation terms for the running statistics (see statsStag.cpp)
+    StatsKahan statsKahan;
 
     // make BoxArray and Geometry
     BoxArray ba;
@@ -856,6 +859,34 @@ void main_driver(const char* argv)
 
     } // else restart/non-restart
 
+    // Kahan compensation terms are not checkpointed; restarting them from zero
+    // costs at most an ulp per accumulator
+    if (plot_means) {
+        statsKahan.cuMeans.define(ba,dmap,nvars,ngc); // mean density is updated in the ghost region as well
+        statsKahan.primMeans.define(ba,dmap,nprimvars+3,0);
+        if (nspec_surfcov>0) statsKahan.surfcovMeans.define(ba,dmap,nspec_surfcov,0);
+    }
+    if ((plot_vars) or (plot_covars)) {
+        statsKahan.cuVars.define(ba,dmap,nvars,0);
+        statsKahan.primVars.define(ba,dmap,nprimvars+5,0);
+        statsKahan.coVars.define(ba,dmap,26,0);
+        if (plot_mom4) statsKahan.mom4.define(ba,dmap,nvars+1,0);
+        if (nspec_surfcov>0) statsKahan.surfcovVars.define(ba,dmap,nspec_surfcov,0);
+        for (int d=0; d<AMREX_SPACEDIM; d++) {
+            statsKahan.velVars[d].define(convert(ba,nodal_flag_dir[d]), dmap, 1, 0);
+            statsKahan.cumomVars[d].define(convert(ba,nodal_flag_dir[d]), dmap, 1, 0);
+        }
+    }
+    if (plot_cross) {
+        if (do_1D) {
+            statsKahan.spatialCrossMF.define(ba,dmap,(all_correl) ? ncross*5 : ncross,0);
+        }
+        else if (!do_2D) {
+            statsKahan.spatialCrossVec.resize(n_cells[0]*ncross);
+        }
+    }
+    statsKahan.setVal0();
+
 #if defined(TURB)
     if (turbForcing >= 1) {
         MFTurbVel.define(ba, dmap, 3, 0);
@@ -1241,6 +1272,8 @@ void main_driver(const char* argv)
                 spatialCrossVec.assign(spatialCrossVec.size(), 0.0);
             }
 
+            statsKahan.setVal0();
+
             std::printf("Resetting stat collection.\n");
 
             statsCount = 1;
@@ -1252,20 +1285,20 @@ void main_driver(const char* argv)
             evaluateStatsStag1D(cu, cuMeans, cuVars, prim, primMeans, primVars, vel,
                                 velMeans, velVars, cumom, cumomMeans, cumomVars, coVars, mom3, mom4,
                                 surfcov, surfcovMeans, surfcovVars, surfcovcoVars,
-                                spatialCrossMF, ncross, statsCount, geom);
+                                spatialCrossMF, ncross, statsKahan, statsCount, geom);
         }
         else if (do_2D) {
             evaluateStatsStag2D(cu, cuMeans, cuVars, prim, primMeans, primVars, vel,
                                 velMeans, velVars, cumom, cumomMeans, cumomVars, coVars, mom3, mom4,
                                 surfcov, surfcovMeans, surfcovVars, surfcovcoVars,
-                                spatialCrossMF, ncross, statsCount, geom);
+                                spatialCrossMF, ncross, statsKahan, statsCount, geom);
         }
         else {
             evaluateStatsStag3D(cu, cuMeans, cuVars, prim, primMeans, primVars, vel,
                                 velMeans, velVars, cumom, cumomMeans, cumomVars, coVars, mom3, mom4,
                                 surfcov, surfcovMeans, surfcovVars, surfcovcoVars,
                                 dataSliceMeans_xcross, spatialCrossVec, ncross, domain,
-                                statsCount, geom);
+                                statsKahan, statsCount, geom);
         }
         statsCount++;
         if (step%100 == 0) {

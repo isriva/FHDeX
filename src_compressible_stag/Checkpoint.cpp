@@ -26,7 +26,7 @@ namespace {
 }
 
 void WriteCheckPoint(int step,
-                     const amrex::Real time,
+                     const double time,
                      int statsCount,
                      const amrex::Geometry& /*geom*/,
                      const amrex::MultiFab& cu,
@@ -257,7 +257,7 @@ void WriteCheckPoint(int step,
 }
 
 void ReadCheckPoint(int& step,
-                    amrex::Real& time,
+                    double& time,
                     int& statsCount,
                     amrex::Geometry& geom,
                     const amrex::Box& domain,
