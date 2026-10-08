@@ -40,6 +40,13 @@ void InitializeCompressibleNamespace()
         default:
             amrex::Abort("InitializeCompressibleNamespace: transport_type must be 1, 2 or 3");
     }
+#if defined(AMREX_USE_FLOAT)
+    // The Valk/Waldmann and HCB paths form products such as k_B^3, (m_i+m_j)^3, m_i*m_j*eta_i*eta_j
+    // and n_i*n_k in cgs units, which underflow to zero or overflow to inf in single precision.
+    if (transport_type != 1) {
+        amrex::Abort("InitializeCompressibleNamespace: transport_type 2 and 3 are not supported with PRECISION=FLOAT; use transport_type = 1");
+    }
+#endif
 
     // get membrane cell
     membrane_cell = -1; // location of membrane (default)

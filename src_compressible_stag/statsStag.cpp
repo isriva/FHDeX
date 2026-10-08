@@ -3,25 +3,9 @@
 
 #include "common_functions.H"
 
-#include <AMReX_CompensatedSum.H>
-
-// Running averages are updated in increment form, mean += (sample - mean)/steps.
-// In single precision the increment drops below half an ulp of the mean once
-// steps > sigma/(eps*|<sample>|), so accumulators with a nonzero expected value
-// (means of rho, rhoE, rhoYk, Xk, T, theta and second moments with nonzero
-// expectation) use Kahan compensation. Zero-expectation accumulators shrink like
-// sigma/sqrt(steps) and never swamp, so they use the plain update.
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void runningMean (Real& mean, Real sample, Real stepsinv) noexcept
-{
-    mean += (sample - mean)*stepsinv;
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void runningMeanKahan (Real& mean, Real& comp, Real sample, Real stepsinv) noexcept
-{
-    amrex::compensatedAdd(mean, comp, (sample - mean)*stepsinv);
-}
+// runningMean / runningMeanKahan: increment-form running averages (Kahan-compensated
+// for accumulators with nonzero expectation); see RunningMean.H
+#include "RunningMean.H"
 
 
 ///////////////////////////////////////////
@@ -79,17 +63,41 @@ void evaluateStatsStag3D(MultiFab& cons, MultiFab& consMean, MultiFab& consVar,
     prim_avg = sumToLine(prim_in,1,nspecies+4,domain,0,false);
     primmeans_avg = sumToLine(primMean,1,nspecies+4,domain,0,false);
 
+    const Real nyzinv = Real(1.0/(static_cast<double>(n_cells[1])*static_cast<double>(n_cells[2])));
     for (int i=0; i<nvars*domain.length(0); ++i) {
-        cu_avg[i] /= n_cells[1]*n_cells[2];
-        cumeans_avg[i] /= n_cells[1]*n_cells[2];
+        cu_avg[i] *= nyzinv;
+        cumeans_avg[i] *= nyzinv;
     }
     for (int i=0; i<(nspecies+4)*domain.length(0); ++i) {
-        prim_avg[i] /= n_cells[1]*n_cells[2];
-        primmeans_avg[i] /= n_cells[1]*n_cells[2];
+        prim_avg[i] *= nyzinv;
+        primmeans_avg[i] *= nyzinv;
     }
 
     // Update Spatial Correlations
-    if (plot_cross) EvaluateSpatialCorrelations3D(spatialCross3D,kahan.spatialCrossVec,dataSliceMeans_xcross,cu_avg,cumeans_avg,prim_avg,primmeans_avg,steps,nstats,ncross);
+    if (plot_cross) {
+        // Plane-averaged fluctuations are O(sigma/sqrt(Ny*Nz)) while the plane averages themselves
+        // are O(1); differencing two separately rounded plane sums (cu_avg - cumeans_avg) leaves
+        // mostly roundoff in single precision. Average the per-cell fluctuations instead.
+        // Same component layout as cu_avg and prim_avg.
+        MultiFab delcons(cons.boxArray(), cons.DistributionMap(), nvars, 0);
+        MultiFab::Copy    (delcons, cons,     0, 0, nvars, 0);
+        MultiFab::Subtract(delcons, consMean, 0, 0, nvars, 0);
+        MultiFab delprim(prim_in.boxArray(), prim_in.DistributionMap(), nspecies+4, 0);
+        MultiFab::Copy    (delprim, prim_in,  1, 0, nspecies+4, 0);
+        MultiFab::Subtract(delprim, primMean, 1, 0, nspecies+4, 0);
+
+        amrex::Gpu::HostVector<Real> delcu_avg   = sumToLine(delcons,0,nvars,domain,0,false);
+        amrex::Gpu::HostVector<Real> delprim_avg = sumToLine(delprim,0,nspecies+4,domain,0,false);
+        for (int i=0; i<nvars*domain.length(0); ++i) {
+            delcu_avg[i] *= nyzinv;
+        }
+        for (int i=0; i<(nspecies+4)*domain.length(0); ++i) {
+            delprim_avg[i] *= nyzinv;
+        }
+
+        EvaluateSpatialCorrelations3D(spatialCross3D,kahan.spatialCrossVec,dataSliceMeans_xcross,cu_avg,cumeans_avg,prim_avg,primmeans_avg,
+                                      delcu_avg,delprim_avg,steps,nstats,ncross);
+    }
 }
 
 
@@ -799,12 +807,18 @@ void EvaluateSpatialCorrelations3D(Vector<Real>& spatialCross,
                                    amrex::Gpu::HostVector<Real>& cumeans_avg,
                                    amrex::Gpu::HostVector<Real>& prim_avg,
                                    amrex::Gpu::HostVector<Real>& primmeans_avg,
+                                   amrex::Gpu::HostVector<Real>& delcu_avg,
+                                   amrex::Gpu::HostVector<Real>& delprim_avg,
                                    const int steps,
                                    const int /*nstats*/,
                                    const int ncross)
 {
 
     BL_PROFILE_VAR("EvaluateSpatialCorrelations3D()",EvaluateSpatialCorrelations3D);
+
+    // delcu_avg / delprim_avg are plane averages of the per-cell fluctuations (cons - consMean,
+    // prim - primMean), with the layout of cu_avg / prim_avg. Fluctuations are taken from them
+    // rather than as differences of instantaneous and mean plane averages (cancellation in FP32).
 
     Real stepsinv = Real(1.0/static_cast<double>(steps));
 
@@ -845,22 +859,22 @@ void EvaluateSpatialCorrelations3D(Vector<Real>& spatialCross,
     Real meanuxcross = data_xcross[11];
 
     // Get fluctuations of the conserved variables at the cross cell
-    Real delrhocross = data_xcross[0] - data_xcross[1];
-    Real delKcross   = data_xcross[2] - data_xcross[3];
-    Real deljxcross  = data_xcross[4] - data_xcross[5];
-    Real deljycross  = data_xcross[6] - data_xcross[7];
-    Real deljzcross  = data_xcross[8] - data_xcross[9];
+    Real delrhocross = delcu_avg[0+nvars*cross_cell];
+    Real delKcross   = delcu_avg[4+nvars*cross_cell];
+    Real deljxcross  = delcu_avg[1+nvars*cross_cell];
+    Real deljycross  = delcu_avg[2+nvars*cross_cell];
+    Real deljzcross  = delcu_avg[3+nvars*cross_cell];
     Vector<Real>  delrhoYkcross(nspecies, 0.0);
     for (int ns=0; ns<nspecies; ++ns) {
-        delrhoYkcross[ns] =  data_xcross[18+4*ns+0] - data_xcross[18+4*ns+1];
+        delrhoYkcross[ns] =  delcu_avg[5+ns+nvars*cross_cell];
     }
 
     // Get fluctuations of some primitive variables (for direct fluctuation calculations)
-    Real delTcross = data_xcross[16] - data_xcross[17];
-    Real delvxcross = data_xcross[10] - data_xcross[11];
+    Real delTcross = delprim_avg[3+nprims*cross_cell];
+    Real delvxcross = delprim_avg[0+nprims*cross_cell];
     Vector<Real>  delYkcross(nspecies, 0.0);
     for (int ns=0; ns<nspecies; ++ns) {
-        delYkcross[ns] =  data_xcross[18+4*ns+2] - data_xcross[18+4*ns+3];
+        delYkcross[ns] =  delprim_avg[4+ns+nprims*cross_cell];
     }
 
     // evaluate heat stuff at the cross cell
@@ -874,8 +888,8 @@ void EvaluateSpatialCorrelations3D(Vector<Real>& spatialCross,
 
     // Get fluctuations of derived hydrodynamic quantities at the cross cell
     // delG = \vec{v}\cdot\vec{\deltaj}
-    Real delGcross = data_xcross[11]*(data_xcross[4]-data_xcross[5]) + data_xcross[13]*(data_xcross[6]-data_xcross[7]) +
-                    data_xcross[15]*(data_xcross[8]-data_xcross[9]);
+    Real delGcross = data_xcross[11]*deljxcross + data_xcross[13]*deljycross +
+                    data_xcross[15]*deljzcross;
 
     /////////////////////////////////////////////////////////////
     // evaluate x-spatial correlations
@@ -891,22 +905,22 @@ void EvaluateSpatialCorrelations3D(Vector<Real>& spatialCross,
         }
 
         // Get fluctuations of the conserved variables
-        Real delrho = cu_avg[0+nvars*i] - cumeans_avg[0+nvars*i];
-        Real delK   = cu_avg[4+nvars*i] - cumeans_avg[4+nvars*i];
-        Real deljx  = cu_avg[1+nvars*i] - cumeans_avg[1+nvars*i];
-        Real deljy  = cu_avg[2+nvars*i] - cumeans_avg[2+nvars*i];
-        Real deljz  = cu_avg[3+nvars*i] - cumeans_avg[3+nvars*i];
+        Real delrho = delcu_avg[0+nvars*i];
+        Real delK   = delcu_avg[4+nvars*i];
+        Real deljx  = delcu_avg[1+nvars*i];
+        Real deljy  = delcu_avg[2+nvars*i];
+        Real deljz  = delcu_avg[3+nvars*i];
         Vector<Real>  delrhoYk(nspecies, 0.0);
         for (int ns=0; ns<nspecies; ++ns) {
-            delrhoYk[ns] = cu_avg[5+ns+nvars*i] - cumeans_avg[5+ns+nvars*i];
+            delrhoYk[ns] = delcu_avg[5+ns+nvars*i];
         }
 
         // Get fluctuations of some primitive variables (for direct fluctuation calculations)
-        Real delT = prim_avg[3+nprims*i] - primmeans_avg[3+nprims*i];
-        Real delvx = prim_avg[0+nprims*i] - primmeans_avg[0+nprims*i];
+        Real delT = delprim_avg[3+nprims*i];
+        Real delvx = delprim_avg[0+nprims*i];
         Vector<Real>  delYk(nspecies, 0.0);
         for (int ns=0; ns<nspecies; ++ns) {
-            delYk[ns] = prim_avg[4+ns+nprims*i] - primmeans_avg[4+ns+nprims*i];
+            delYk[ns] = delprim_avg[4+ns+nprims*i];
         }
 
         // evaluate heat stuff at the cross cell

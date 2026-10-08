@@ -34,7 +34,7 @@ void main_driver(const char* argv)
     BL_PROFILE_VAR("main_driver()",main_driver);
 
     // store the current time so we can later compute total run time.
-    Real strt_time = ParallelDescriptor::second();
+    double strt_time = ParallelDescriptor::second();
 
     std::string inputs_file = argv;
 
@@ -1124,7 +1124,7 @@ void main_driver(const char* argv)
     for (int step=step_start;step<=max_step;++step) {
 
         // timer
-        Real ts1 = ParallelDescriptor::second();
+        double ts1 = ParallelDescriptor::second();
 
         // sample surface chemistry
 #if defined(MUI)
@@ -1224,14 +1224,14 @@ void main_driver(const char* argv)
         }
 
         // timer
-        Real ts2 = ParallelDescriptor::second() - ts1;
+        double ts2 = ParallelDescriptor::second() - ts1;
         ParallelDescriptor::ReduceRealMax(ts2, ParallelDescriptor::IOProcessorNumber());
         if (step%100 == 0) {
             amrex::Print() << "Advanced step " << step << " in " << ts2 << " seconds\n";
         }
 
         // timer
-        Real aux1 = ParallelDescriptor::second();
+        double aux1 = ParallelDescriptor::second();
 
         // reset statistics after n_steps_skip
         // if n_steps_skip is negative, we use it as an interval
@@ -1787,7 +1787,7 @@ void main_driver(const char* argv)
         }
 
         // timer
-        Real aux2 = ParallelDescriptor::second() - aux1;
+        double aux2 = ParallelDescriptor::second() - aux1;
         ParallelDescriptor::ReduceRealMax(aux2,  ParallelDescriptor::IOProcessorNumber());
         if (step%100 == 0) {
             amrex::Print() << "Aux time (stats, struct fac, plotfiles) " << aux2 << " seconds\n";
@@ -1835,7 +1835,7 @@ void main_driver(const char* argv)
 #endif
 
     // timer
-    Real stop_time = ParallelDescriptor::second() - strt_time;
+    double stop_time = ParallelDescriptor::second() - strt_time;
     ParallelDescriptor::ReduceRealMax(stop_time, ParallelDescriptor::IOProcessorNumber());
     amrex::Print() << "Run time = " << stop_time << std::endl;
 }

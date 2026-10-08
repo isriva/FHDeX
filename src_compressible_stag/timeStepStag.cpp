@@ -343,7 +343,7 @@ void RK3stepStag(MultiFab& cu,
         geom, stoch_weights,dt);
 
     // reservoir timers
-    Real aux1, aux2, aux3, aux4, aux5, aux6;
+    double aux1, aux2, aux3, aux4, aux5, aux6; // wall-clock timers (double: MPI_Wtime does not fit in float)
 
     // add to the total continuum fluxes based on RK3 weight
     if (do_reservoir) {
@@ -372,7 +372,7 @@ void RK3stepStag(MultiFab& cu,
     amrex::Real energy_in = amrex::Real(0.0);
     if (turbForcing == 2) { // random forcing tubulence : get average energy input
         ReduceOps<ReduceOpSum> reduce_op;
-        ReduceData<Real> reduce_data(reduce_op);
+        ReduceData<double> reduce_data(reduce_op); // domain sum in double: subtracted from every cell, so float error would break energy balance
         using ReduceTuple = typename decltype(reduce_data)::Type;
 
         for ( MFIter mfi(cu,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
@@ -398,9 +398,9 @@ void RK3stepStag(MultiFab& cu,
                               aF_z_p*momz(i,j,k+1) + aF_z_m*momz(i,j,k) )};
             });
         }
-        energy_in = amrex::get<0>(reduce_data.value());
-        ParallelDescriptor::ReduceRealSum(energy_in);
-        energy_in = energy_in/(n_cells[0]*n_cells[1]*n_cells[2]);
+        double energy_in_d = amrex::get<0>(reduce_data.value());
+        ParallelDescriptor::ReduceRealSum(energy_in_d);
+        energy_in = amrex::Real(energy_in_d/(double(n_cells[0])*double(n_cells[1])*double(n_cells[2])));
     }
 #endif
 
@@ -695,7 +695,7 @@ void RK3stepStag(MultiFab& cu,
     amrex::Real energyp_in = amrex::Real(0.0);
     if (turbForcing == 2) { // random forcing tubulence : get average energy input
         ReduceOps<ReduceOpSum> reduce_op;
-        ReduceData<Real> reduce_data(reduce_op);
+        ReduceData<double> reduce_data(reduce_op); // domain sum in double: subtracted from every cell, so float error would break energy balance
         using ReduceTuple = typename decltype(reduce_data)::Type;
 
         for ( MFIter mfi(cu,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
@@ -721,9 +721,9 @@ void RK3stepStag(MultiFab& cu,
                               aF_z_p*mompz(i,j,k+1) + aF_z_m*mompz(i,j,k) )};
             });
         }
-        energyp_in = amrex::get<0>(reduce_data.value());
-        ParallelDescriptor::ReduceRealSum(energyp_in);
-        energyp_in = energyp_in/(n_cells[0]*n_cells[1]*n_cells[2]);
+        double energyp_in_d = amrex::get<0>(reduce_data.value());
+        ParallelDescriptor::ReduceRealSum(energyp_in_d);
+        energyp_in = amrex::Real(energyp_in_d/(double(n_cells[0])*double(n_cells[1])*double(n_cells[2])));
     }
 #endif
 
@@ -774,7 +774,8 @@ void RK3stepStag(MultiFab& cu,
 
         amrex::ParallelFor(bx, nvars, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
         {
-            cup2_fab(i,j,k,n) = Real(0.25)*( Real(3.0)* cu_fab(i,j,k,n) + cup_fab(i,j,k,n) - dt *
+            // increment form of (3/4)*cu + (1/4)*(cup + ...): returns cu exactly when nothing changes, in any precision
+            cup2_fab(i,j,k,n) = cu_fab(i,j,k,n) + Real(0.25)*( cup_fab(i,j,k,n) - cu_fab(i,j,k,n) - dt *
                 ( AMREX_D_TERM(  (xflux_fab(i+1,j,k,n) - xflux_fab(i,j,k,n)) / dx[0],
                                + (yflux_fab(i,j+1,k,n) - yflux_fab(i,j,k,n)) / dx[1],
                                + (zflux_fab(i,j,k+1,n) - zflux_fab(i,j,k,n)) / dx[2])
@@ -785,7 +786,7 @@ void RK3stepStag(MultiFab& cu,
         // momentum flux
         amrex::ParallelFor(tbx, tby, tbz,
         [=] AMREX_GPU_DEVICE (int i, int j, int k) {
-            momp2x(i,j,k) = Real(0.25)*Real(3.0)*momx(i,j,k) + Real(0.25)*mompx(i,j,k)
+            momp2x(i,j,k) = momx(i,j,k) + Real(0.25)*(mompx(i,j,k) - momx(i,j,k))
                 -Real(0.25)*dt*(cenx_u(i,j,k) - cenx_u(i-1,j,k))/dx[0]
                 -Real(0.25)*dt*(edgey_u(i,j+1,k) - edgey_u(i,j,k))/dx[1]
                 -Real(0.25)*dt*(edgez_u(i,j,k+1) - edgez_u(i,j,k))/dx[2]
@@ -798,7 +799,7 @@ void RK3stepStag(MultiFab& cu,
 #endif
         },
         [=] AMREX_GPU_DEVICE (int i, int j, int k) {
-            momp2y(i,j,k) = Real(0.25)*Real(3.0)*momy(i,j,k) + Real(0.25)*mompy(i,j,k)
+            momp2y(i,j,k) = momy(i,j,k) + Real(0.25)*(mompy(i,j,k) - momy(i,j,k))
                 -Real(0.25)*dt*(edgex_v(i+1,j,k) - edgex_v(i,j,k))/dx[0]
                 -Real(0.25)*dt*(ceny_v(i,j,k) - ceny_v(i,j-1,k))/dx[1]
                 -Real(0.25)*dt*(edgez_v(i,j,k+1) - edgez_v(i,j,k))/dx[2]
@@ -811,7 +812,7 @@ void RK3stepStag(MultiFab& cu,
 #endif
         },
         [=] AMREX_GPU_DEVICE (int i, int j, int k) {
-            momp2z(i,j,k) = Real(0.25)*Real(3.0)*momz(i,j,k) + Real(0.25)*mompz(i,j,k)
+            momp2z(i,j,k) = momz(i,j,k) + Real(0.25)*(mompz(i,j,k) - momz(i,j,k))
                 -Real(0.25)*dt*(edgex_w(i+1,j,k) - edgex_w(i,j,k))/dx[0]
                 -Real(0.25)*dt*(edgey_w(i,j+1,k) - edgey_w(i,j,k))/dx[1]
                 -Real(0.25)*dt*(cenz_w(i,j,k) - cenz_w(i,j,k-1))/dx[2]
@@ -1024,7 +1025,7 @@ void RK3stepStag(MultiFab& cu,
     amrex::Real energyp2_in = amrex::Real(0.0);
     if (turbForcing == 2) { // random forcing tubulence : get average energy input
         ReduceOps<ReduceOpSum> reduce_op;
-        ReduceData<Real> reduce_data(reduce_op);
+        ReduceData<double> reduce_data(reduce_op); // domain sum in double: subtracted from every cell, so float error would break energy balance
         using ReduceTuple = typename decltype(reduce_data)::Type;
 
         for ( MFIter mfi(cu,TilingIfNotGPU()); mfi.isValid(); ++mfi) {
@@ -1053,9 +1054,9 @@ void RK3stepStag(MultiFab& cu,
                               aF_z_p*momp2z(i,j,k+1) + aF_z_m*momp2z(i,j,k) )};
             });
         }
-        energyp2_in = amrex::get<0>(reduce_data.value());
-        ParallelDescriptor::ReduceRealSum(energyp2_in);
-        energyp2_in = energyp2_in/(n_cells[0]*n_cells[1]*n_cells[2]);
+        double energyp2_in_d = amrex::get<0>(reduce_data.value());
+        ParallelDescriptor::ReduceRealSum(energyp2_in_d);
+        energyp2_in = amrex::Real(energyp2_in_d/(double(n_cells[0])*double(n_cells[1])*double(n_cells[2])));
     }
 #endif
 

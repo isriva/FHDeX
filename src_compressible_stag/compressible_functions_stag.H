@@ -372,6 +372,8 @@ void EvaluateSpatialCorrelations3D(Vector<Real>& spatialCross,
                                    amrex::Gpu::HostVector<Real>& cumeans_avg,
                                    amrex::Gpu::HostVector<Real>& prim_avg,
                                    amrex::Gpu::HostVector<Real>& primmeans_avg,
+                                   amrex::Gpu::HostVector<Real>& delcu_avg,
+                                   amrex::Gpu::HostVector<Real>& delprim_avg,
                                    const int steps,
                                    const int nstats,
                                    const int ncross);
