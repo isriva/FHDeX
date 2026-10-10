@@ -272,7 +272,8 @@ AmrCoreAdv::CheckParticlesOnly () const
     if (!grids[1].contains(Geom(1).Domain())) {
         amrex::Abort("adv.particles_only = 1 needs level 1 to cover the whole domain");
     }
-=======
+}
+
 void
 AmrCoreAdv::InitStructFact ()
 {
@@ -371,7 +372,6 @@ AmrCoreAdv::WriteStructFact ()
         }
     }
     amrex::Print() << "Wrote structure factor (" << sf_nsamples << " samples) at step " << istep[0] << "\n";
->>>>>>> 9efb6332ae0863b48e4d1658ed7a5675038d26d4
 }
 
 void AmrCoreAdv::MakeFBA(const BoxArray& ba)
