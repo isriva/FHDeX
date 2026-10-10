@@ -88,6 +88,23 @@ void init_int_pot (int i, int j, int k,
     amrex::Real r = std::sqrt(x*x+y*y);
 #endif
 
+    // different realizations along an ensemble direction do not interact
+    const int idx[3] = {i, j, k};
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        if (pot.ens_dir[d] && idx[d] != 0) {
+            U(i,j,k) = 0.;
+            return;
+        }
+    }
+
+    if (pot.ip_mesh_avg) {
+        const amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> sep = {AMREX_D_DECL(x, y, z)};
+        amrex::GpuArray<int,AMREX_SPACEDIM> avg_dir;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) { avg_dir[d] = !pot.ens_dir[d]; }
+        U(i,j,k) = ip_U_cellavg(sep, dx, avg_dir, pot);
+        return;
+    }
+
     U(i,j,k) = ip_U(r, pot);
 //    U(i,j,k) = std::cos(2*PI*i*dx[0]);
 /*

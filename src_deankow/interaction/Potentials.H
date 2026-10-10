@@ -6,6 +6,7 @@
 #include <cmath>
 #include <string>
 
+#include <AMReX_Array.H>
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
@@ -66,6 +67,11 @@ struct PotentialParams
     amrex::Real ip_pp_a     = 0.5;   // pp only: core radius / ip_R
 >>>>>>> origin
     amrex::Real ip_range    = 0.0;   // particle pair cutoff radius; <= 0 means no cutoff
+    int         ip_mesh_avg = 1;     // SPDE mesh kernel: 1 = cell-pair average of U, 0 = U at cell centres
+
+    // ensemble directions (top-level is_ensemble_dir): no transport along them,
+    // and the SPDE mesh kernel couples only cells in the same realization
+    amrex::GpuArray<int,3> ens_dir = {0, 0, 0};
 
     // external potential
     int         use_ext_pot = 0;
@@ -117,6 +123,93 @@ amrex::Real ip_U (amrex::Real r, PotentialParams const& pot) noexcept
     default:
         return pot.ip_eps * std::exp(-std::pow(r/pot.ip_R, pot.ip_alpha));
     }
+}
+
+// Length scale that the mesh-kernel quadrature has to resolve
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ip_Rmin (PotentialParams const& pot) noexcept
+{
+    if (pot.ip_type == IntPotType::MORSE) { return amrex::min(pot.ip_R_att, pot.ip_R_rep); }
+    if (pot.ip_type == IntPotType::WCA) { return (ip_wca_rc - pot.ip_wca_rcap)*pot.ip_R; }
+    return pot.ip_R;
+}
+
+// exp(-s^2/R^2) averaged over a pair of 1D cells of size h whose centres are
+// s apart: (1/h^2) int int exp(-(s+u-v)^2/R^2) du dv over [-h/2,h/2]^2
+//   = (R/h)^2 [G(z+a) - 2G(z) + G(z-a)],  z = s/R, a = h/R,
+// G(z) = (sqrt(pi)/2) z erf(z) + exp(-z^2)/2, the second antiderivative of
+// exp(-z^2). Summed over all cell separations it gives sqrt(pi) R / h exactly.
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ip_gauss_cellavg_1d (amrex::Real s, amrex::Real h, amrex::Real R) noexcept
+{
+    const amrex::Real z = s/R;
+    const amrex::Real a = h/R;
+    // the second difference cancels badly for h << R; the cell average is then
+    // the centre value up to O(a^2)
+    if (a < 1.e-3) { return std::exp(-z*z); }
+    constexpr amrex::Real sqrtpi_half = 0.886226925452758014;
+    auto G = [=] (amrex::Real x) noexcept {
+        return sqrtpi_half*x*std::erf(x) + 0.5*std::exp(-x*x);
+    };
+    return (G(z+a) - 2.0*G(z) + G(z-a)) / (a*a);
+}
+
+// SPDE mesh kernel: U averaged over a pair of cells (sizes dx) whose centres
+// are separated by sep, along the directions with avg_dir = 1; the others use
+// the separation itself (ensemble directions, where only sep = 0 is used).
+// This is the finite-volume convolution of U with a piecewise-constant
+// density, so sum_cells U*cellvol equals the integral of U at any dx, also
+// for ip_R << dx where the centre values miss the kernel almost entirely.
+// The Gaussian is done exactly; the other kernels by the triangle-weighted
+// form (1/h) int_{-h}^{h} (1 - |u|/h) U(s + u) du per direction, with a
+// midpoint rule fine enough to resolve ip_Rmin (at most nmax points per
+// direction).
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::Real ip_U_cellavg (amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& sep,
+                          amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& dx,
+                          amrex::GpuArray<int,AMREX_SPACEDIM> const& avg_dir,
+                          PotentialParams const& pot) noexcept
+{
+    if (pot.ip_type == IntPotType::GAUSS) {
+        amrex::Real u = pot.ip_eps;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            const amrex::Real s = sep[d]/pot.ip_R;
+            u *= avg_dir[d] ? ip_gauss_cellavg_1d(sep[d], dx[d], pot.ip_R) : std::exp(-s*s);
+        }
+        return u;
+    }
+
+    constexpr int nmax = 256;
+    const amrex::Real rq = ip_Rmin(pot);
+    int n[3] = {1, 1, 1};
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        if (avg_dir[d]) {
+            // even, so that the kink of the weight at u = 0 is on a cell edge
+            const int nd = 2*static_cast<int>(std::ceil(8.0*dx[d]/rq));
+            n[d] = amrex::max(2, amrex::min(nmax, nd));
+        }
+    }
+    amrex::Real sum = 0.0;
+    for (int c = 0; c < n[2]; ++c) {
+    for (int b = 0; b < n[1]; ++b) {
+    for (int a = 0; a < n[0]; ++a) {
+        const int idx[3] = {a, b, c};
+        amrex::Real r2 = 0.0;
+        amrex::Real w = 1.0;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            amrex::Real x = sep[d];
+            if (n[d] > 1) {
+                // midpoint of the idx-th of n[d] intervals of [-dx, dx]
+                const amrex::Real du = 2.0*dx[d]/n[d];
+                const amrex::Real u = -dx[d] + (idx[d] + 0.5)*du;
+                x += u;
+                w *= (1.0 - std::abs(u)/dx[d]) * du/dx[d];
+            }
+            r2 += x*x;
+        }
+        sum += w*ip_U(std::sqrt(r2), pot);
+    }}}
+    return sum;
 }
 
 // (dU/dr)/r, so that the force on particle i from particle j is
@@ -238,6 +331,30 @@ inline void read_potential_params (PotentialParams& pot)
 >>>>>>> origin
     pp.query("ip_range", pot.ip_range);
 
+    std::string mesh_kernel = "avg";
+    pp.query("ip_mesh_kernel", mesh_kernel);
+    if (mesh_kernel == "avg") {
+        pot.ip_mesh_avg = 1;
+    } else if (mesh_kernel == "point") {
+        pot.ip_mesh_avg = 0;
+    } else {
+        amrex::Abort("Unknown amr.ip_mesh_kernel = " + mesh_kernel + "; valid values are: avg, point");
+    }
+
+    {
+        amrex::ParmParse pp_top;
+        amrex::Vector<int> ens(AMREX_SPACEDIM, 0);
+        pp_top.queryarr("is_ensemble_dir", ens, 0, AMREX_SPACEDIM);
+        int n_ens = 0;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            pot.ens_dir[d] = (ens[d] != 0);
+            n_ens += pot.ens_dir[d];
+        }
+        if (n_ens == AMREX_SPACEDIM) {
+            amrex::Abort("is_ensemble_dir cannot be set in every direction");
+        }
+    }
+
     pp.query("use_ext_pot", pot.use_ext_pot);
     pp.query("ep_alpha", pot.ep_alpha);
     pp.query("ep_beta", pot.ep_beta);
@@ -314,7 +431,8 @@ inline void read_potential_params (PotentialParams& pot)
                        << " ip_pp_a = " << pot.ip_pp_a;
 >>>>>>> origin
     }
-    amrex::Print() << " ip_range = " << pot.ip_range << "\n";
+    amrex::Print() << " ip_range = " << pot.ip_range
+                   << " ip_mesh_kernel = " << mesh_kernel << "\n";
     amrex::Print() << "External potential: use_ext_pot = " << pot.use_ext_pot
                    << " ep_alpha = " << pot.ep_alpha
                    << " ep_beta = " << pot.ep_beta
