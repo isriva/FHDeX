@@ -748,6 +748,26 @@ AmrCoreAdv::InitFFTLevel0 ()
         }
     }
 
+    // Integrated strength of the mesh kernel, sum U*cellvol = Uhat(0)*cellvol,
+    // which sets the mean-field collective diffusion D + phi*num_part*Uhat(0)*cellvol.
+    // For the Gaussian compare with the continuum value per realization,
+    // ip_eps*(sqrt(pi) ip_R)^(number of non-ensemble directions) times the
+    // cell size along each ensemble direction.
+    if (pot.use_int_pot) {
+        const Real cellvol = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
+        const Real usum = U.sum(0)*cellvol;
+        amrex::Print() << "Mesh kernel (ip_mesh_kernel = " << (pot.ip_mesh_avg ? "avg" : "point")
+                       << "): sum U*cellvol = " << usum;
+        if (pot.ip_type == IntPotType::GAUSS) {
+            Real uint = pot.ip_eps;
+            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                uint *= pot.ens_dir[d] ? dx[d] : std::sqrt(amrex::Math::pi<Real>())*pot.ip_R;
+            }
+            amrex::Print() << " (continuum " << uint << ")";
+        }
+        amrex::Print() << "\n";
+    }
+
     r2c_forward->forward(U, Uhat);
 
     PrintUhatMinMax();
@@ -765,6 +785,7 @@ AmrCoreAdv::ComputeInteractionStiffness ()
     const auto dx = Geom(lev).CellSizeArray();
     const Real cellvol = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
     const Real pi = amrex::Math::pi<Real>();
+    const auto ens_dir = pot.ens_dir;
 
     // The interaction flux phi_face*(C_i - C_{i-1})/dx followed by the flux
     // divergence has the discrete-Laplacian symbol
@@ -782,6 +803,7 @@ AmrCoreAdv::ComputeInteractionStiffness ()
             const int m[3] = {i, j, k};
             Real keff2 = 0.;
             for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                if (ens_dir[d]) { continue; }   // no flux along ensemble directions
                 const Real s = std::sin(pi*m[d]/nk[d]);
                 keff2 += 4.*s*s/(dx[d]*dx[d]);
             }
@@ -792,7 +814,9 @@ AmrCoreAdv::ComputeInteractionStiffness ()
     ParallelDescriptor::ReduceRealMax(int_stiff);
 
     Real keff2_max = 0.;
-    for (int d = 0; d < AMREX_SPACEDIM; ++d) { keff2_max += 4./(dx[d]*dx[d]); }
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        if (!ens_dir[d]) { keff2_max += 4./(dx[d]*dx[d]); }
+    }
     amrex::Print() << "Explicit stability: D*keff2_max = " << diff_coeff*keff2_max
                    << " interaction max_k keff^2*Uhat*cellvol = " << int_stiff
                    << " (multiplied by max phi in EstTimeStep)\n";
@@ -1806,9 +1830,11 @@ AmrCoreAdv::EstTimeStep (int lev, Real /*time*/)
     //   lambda_max <= D*keff2_max + max(phi)*int_stiff
     // with keff2_max = sum_d 4/dx_d^2 (pure diffusion gives dt <= dx^2/(2 d D)).
     // cfl is the fraction of this limit that is used.
-    Real keff2_max = AMREX_D_TERM(   4./(dx[0]*dx[0]),
-                                   + 4./(dx[1]*dx[1]),
-                                   + 4./(dx[2]*dx[2]) );
+    // (ensemble directions carry no flux, so they do not limit dt)
+    Real keff2_max = 0.;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        if (!pot.ens_dir[d]) { keff2_max += 4./(dx[d]*dx[d]); }
+    }
     Real lambda_max = diff_coeff * keff2_max;
     if (pot.use_int_pot && int_stiff > 0.) {
         lambda_max += amrex::max(phi_new[lev].max(0), Real(0.)) * int_stiff;

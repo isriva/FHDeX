@@ -57,7 +57,12 @@ void advance_phi (MultiFab& phi_old,
   if(dorand != 0.){
     // Fill stochFlux with random numbers (can skip density component 0)
     for (int d=0;d<AMREX_SPACEDIM;d++) {
-        MultiFabFillRandom(stochFlux[d], 0, variance, geom);
+        // no transport along an ensemble direction, so no noise either
+        if (pot.ens_dir[d]) {
+            stochFlux[d].setVal(0.);
+        } else {
+            MultiFabFillRandom(stochFlux[d], 0, variance, geom);
+        }
     }
 
   } else {
@@ -93,6 +98,9 @@ void advance_phi (MultiFab& phi_old,
         auto const& phi = phi_old.array(mfi);
         auto const& C_arr = C.array(mfi);
 
+        // fluxes along ensemble directions stay zero (set in AdvancePhiAtLevel),
+        // so the realizations (rows of cells along them) are independent
+        if (!pot.ens_dir[0])
         amrex::ParallelFor(xbx,
             [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
@@ -101,6 +109,7 @@ void advance_phi (MultiFab& phi_old,
                                noise_avg_type, drift_flux_type, n_per_phi);
             });
 
+        if (!pot.ens_dir[1])
         amrex::ParallelFor(ybx,
             [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
@@ -109,6 +118,7 @@ void advance_phi (MultiFab& phi_old,
                                noise_avg_type, drift_flux_type, n_per_phi);
             });
 #if (AMREX_SPACEDIM > 2)
+        if (!pot.ens_dir[2])
         amrex::ParallelFor(zbx,
             [=] AMREX_GPU_DEVICE (int i, int j, int k)
             {
