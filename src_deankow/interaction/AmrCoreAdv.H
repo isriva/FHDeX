@@ -15,6 +15,7 @@
 #include "Potentials.H"
 #include "InitProfile.H"
 #include "StructFact.H"
+#include "IntermediateScatteringFunction.H"
 
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
@@ -234,6 +235,11 @@ private:
     void InitStructFact ();
     void StructFactSample ();
     void WriteStructFact ();
+    // var_scaling for StructFact: S = |n_hat|^2/N, shared with the ISF
+    amrex::Real SFVarScaling () const;
+
+    // intermediate scattering function of phi on level 0 (isf_* inputs)
+    std::unique_ptr<IntermediateScatteringFunction> isf;
 
     void PrintNegativeDensityDiagnostics (int step) const;
 

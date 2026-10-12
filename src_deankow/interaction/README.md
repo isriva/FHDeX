@@ -207,6 +207,52 @@ effective number of independent samples is smaller at low k.
 `python/cluster_diagnostics.py` and `cluster_diagnostics_3d.py` compute the
 same shell-averaged S(k) from plotfiles (`sf.txt`).
 
+## Intermediate scattering function (in-code)
+
+F(k,τ) = ⟨n̂(k,t+τ) n̂(k,t)*⟩/N of φ on level 0 can be accumulated for a set of
+x wave vectors k = 2πq/Lx. φ on level 0 is the averaged-down particle density
+when particles cover the domain (e.g. `adv.particles_only = 1`). F uses the
+structure factor's normalization (it shares the same `StructFact` FFT), so
+F(k,0) = S(k), and an ideal gas gives F(k,τ) = exp(−Dk²τ). The ISF code was
+ported from the noninteracting ensemble code (`src_deankow/ensemble/noninteracting`
+on the `ML_inference` branch of siddanib/FHDeX); the `isf_*` inputs are the same.
+
+Time origins (windows) start every `isf_window_stride` steps from step
+`isf_relax_time`. Each window is measured every `isf_dt_meas` steps up to a lag
+of `isf_t_max` steps, and only complete windows are averaged. All counts are
+in time steps.
+
+| Input | Default | Effect |
+| --- | --- | --- |
+| `isf_n_modes` | 0 (off) | Number of x modes |
+| `isf_q_min`, `isf_q_stride` | 1, 1 | Modes q = `isf_q_min` + m·`isf_q_stride`, m = 0 … n−1; the largest must be ≤ nx/2 |
+| `isf_dt_meas` | – | Lag spacing (steps, > 0) |
+| `isf_t_max` | – | Largest lag (steps, a multiple of `isf_dt_meas`) |
+| `isf_window_stride` | – | Steps between time origins (> 0) |
+| `isf_relax_time` | 0 | First time origin (step) |
+| `isf_do_1D` (or `do_1D`) | 0 | **0:** the ky = kz = 0 modes of the full FFT. **1:** FFT each x pencil (row) separately and average over pencils. |
+| `isf_plot_file` | `isf` | Output file prefix |
+
+`isf_do_1D = 1` is meant for runs with every direction but x in
+`is_ensemble_dir`, where each pencil is an independent realization. F is then
+the average over realizations of n̂_p n̂_p*/N_p. In a non-ensemble 2D/3D run a
+pencil transform mixes in all ky (and kz), so F decays faster than exp(−Dkx²τ).
+
+Output, rewritten with each plotfile and at the end of the run: one file per
+mode, `<isf_plot_file>[_1D]_q<q>.dat`, with columns
+`lag_index lag_time q_index kx F_real F_imag F_mag n_windows`. `lag_time` is
+the mean elapsed time over the windows, so a varying dt is handled. The ISF is
+not checkpointed; after a restart, accumulation starts again.
+
+`exec/dean_kow/interaction/inputs_part_wca_1d_ensemble_isf` runs it (and S(k))
+for the 1D WCA ensemble in equilibrium.
+
+**Checks** (2D ideal-gas SPDE, 64², N = 81920, cfl 0.25, about 2000 windows):
+- F(k,0) equals S(k) from `plt_SF_mag` over the same samples, to 0.5%. That
+  holds both at ky = 0 (`isf_do_1D = 0`) and for the ky average (`isf_do_1D = 1`).
+- F(k,τ)/F(k,0) follows exp(−D k_eff² τ), with k_eff = (2/Δx) sin(kΔx/2), to
+  within the statistical noise.
+
 ## Postprocessing
 
 `python/stack_plotfiles_time.py` stacks a series of 2D plotfiles into a 3D

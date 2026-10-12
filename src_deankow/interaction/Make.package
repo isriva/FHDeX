@@ -2,6 +2,7 @@ CEXE_sources += AdvancePhiAtLevel.cpp
 CEXE_sources += AmrCoreAdv.cpp 
 CEXE_sources += main.cpp 
 CEXE_sources += myfunc.cpp 
+CEXE_sources += IntermediateScatteringFunction.cpp
 
 CEXE_headers += AmrCoreAdv.H 
 CEXE_headers += bc_fill.H
@@ -10,6 +11,7 @@ CEXE_headers += Tagging.H
 CEXE_headers += mykernel.H
 CEXE_headers += Potentials.H
 CEXE_headers += InitProfile.H
+CEXE_headers += IntermediateScatteringFunction.H
 
 ifeq ($(USE_PARTICLES),TRUE)
 CEXE_headers += ParticleData.H

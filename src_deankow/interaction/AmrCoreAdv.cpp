@@ -140,6 +140,9 @@ AmrCoreAdv::Evolve ()
     Real cur_time = t_new[0];
     int last_plot_file_step = 0;
 
+    // the ISF windows can start from the initial state
+    isf->Sample(istep[0], cur_time, phi_new[0]);
+
     for (int step = istep[0]; step < max_step && cur_time < stop_time; ++step)
     {
         amrex::Print() << "\nCoarse STEP " << step+1 << " starts ..." << std::endl;
@@ -172,6 +175,7 @@ AmrCoreAdv::Evolve ()
             && (step+1 - n_steps_skip) % struct_fact_int == 0) {
             StructFactSample();
         }
+        isf->Sample(step+1, cur_time, phi_new[0]);
 
         // sync up time
         for (lev = 0; lev <= finest_level; ++lev) {
@@ -182,6 +186,7 @@ AmrCoreAdv::Evolve ()
             last_plot_file_step = step+1;
             WritePlotFile();
             WriteStructFact();
+            isf->Write();
         }
 
         if (chk_int > 0 && (step+1) % chk_int == 0) {
@@ -203,6 +208,7 @@ AmrCoreAdv::Evolve ()
         WritePlotFile();
     }
     WriteStructFact();
+    isf->Write();
 }
 
 // initializes multilevel data
@@ -250,6 +256,7 @@ AmrCoreAdv::InitData ()
     }
 
     if (struct_fact_int > 0) { InitStructFact(); }
+    if (isf->Enabled()) { isf->Init(Geom(0), grids[0], dmap[0], SFVarScaling()); }
     if (plot_int > 0) {
         WritePlotFile();
     }
@@ -277,6 +284,17 @@ AmrCoreAdv::CheckParticlesOnly () const
 void
 AmrCoreAdv::InitStructFact ()
 {
+    const Vector<std::string> names {"phi"};
+    const Vector<Real> var_scaling {SFVarScaling()};
+    structFact.define(grids[0], dmap[0], names, var_scaling);
+    sf_nsamples = 0;
+    amrex::Print() << "Structure factor: sampled every " << struct_fact_int
+                   << " steps after step " << n_steps_skip << "\n";
+}
+
+Real
+AmrCoreAdv::SFVarScaling () const
+{
     // S(k) = |n_hat(k)|^2 / N with cell counts n = phi N dV; StructFact
     // accumulates |FFT(phi)|^2 / M and multiplies by 1/var_scaling, so
     // var_scaling = 1/(N dV V) makes a Poisson field give S = 1
@@ -284,12 +302,7 @@ AmrCoreAdv::InitStructFact ()
     const Real cellvol = AMREX_D_TERM(dx[0], *dx[1], *dx[2]);
     Real domvol = 1.0;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) { domvol *= Geom(0).ProbLength(d); }
-    const Vector<std::string> names {"phi"};
-    const Vector<Real> var_scaling {1.0/(num_part*cellvol*domvol)};
-    structFact.define(grids[0], dmap[0], names, var_scaling);
-    sf_nsamples = 0;
-    amrex::Print() << "Structure factor: sampled every " << struct_fact_int
-                   << " steps after step " << n_steps_skip << "\n";
+    return 1.0/(num_part*cellvol*domvol);
 }
 
 void
@@ -1456,6 +1469,8 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("drift_cfl", drift_cfl);
         pp.query("struct_fact_int", struct_fact_int);
         pp.query("n_steps_skip", n_steps_skip);
+        isf = std::make_unique<IntermediateScatteringFunction>();
+        isf->ReadParameters(pp);
         if (drift_cfl < 0.) {
             Abort("drift_cfl must be >= 0 (0 = off)");
         }

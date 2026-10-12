@@ -1,0 +1,188 @@
+# *****************************************************************
+# Intermediate scattering function F(k,tau) (and S(k)) of 1D Brownian dynamics
+# of WCA particles (eps = 1, a = 1, kT = D = 1) in equilibrium at a uniform
+# density 0.15, run as 4000 independent realizations stacked along y.
+# Same setup as inputs_part_wca_1d_ensemble except for the uniform density and
+# the analysis block below; see the README for the isf_* inputs.
+#
+#   x: the physical 1D periodic domain, L = 1200, one cell per unit length
+#   y: 4000 rows of cells, one realization per row. With is_ensemble_dir = 0 1
+#      particles do not move in y and interact only with particles in the same
+#      row, through their x separation.
+#
+# Initial number density per unit length (per realization): 0.15 everywhere
+#   -> 180 particles per realization, 720000 in total.
+# Particles are seeded with no two closer than the WCA cutoff (amr.part_init_min_sep
+# below), so the count per realization fluctuates about 160. The particle step is
+# not clamped, so dt must resolve the forces; with this seeding no pair starts
+# closer than 2^(1/6)a.
+# *****************************************************************
+
+# *****************************************************************
+# Run until nsteps == max_step or time == stop_time,
+#     whichever comes first
+# *****************************************************************
+max_step  = 1000000         # t = 100 at dt = 1e-4
+
+# *****************************************************************
+# Intermediate scattering function and structure factor of phi on level 0
+# (the averaged-down particle density), in steps of dt = 1e-4
+# *****************************************************************
+# x modes q = 20, 60, 100, 140, 180 of L = 1200, k = 2 pi q/L (q <= nx/2)
+isf_n_modes       = 5
+isf_q_min         = 20
+isf_q_stride      = 40
+isf_dt_meas       = 100       # lag spacing, t = 0.01
+isf_t_max         = 50000     # largest lag, t = 5
+isf_window_stride = 1000      # a new time origin every t = 0.1
+isf_relax_time    = 100000    # first time origin at t = 10
+isf_do_1D         = 1         # FFT each row (realization) along x separately
+isf_plot_file     = isf_wca   # isf_wca_1D_q<q>.dat, rewritten at each plotfile
+
+# static S(k) from the full 2D FFT; with independent rows it does not depend on
+# ky, so S(kx) is any ky column of plt_SF_mag (or its average over ky)
+struct_fact_int = 1000
+n_steps_skip    = 100000
+#stop_time = 100.
+
+seed = 0
+
+amrex.fpe_trap_invalid = 1
+
+# *****************************************************************
+# Specific to this application
+# *****************************************************************
+diff_coeff = 1.             # D; the particle mobility is 1, so kT = D = 1
+alg_type   = 0
+dorand     = 1.
+
+# Total number of particles, and the particle weight: the pair force is
+# divided by num_part (StochasticPC::AdvectParticles), so amr.ip_eps below is
+# set to num_part to give a WCA pair strength of eps = 1.
+num_part = 720000.
+
+# Piecewise-constant initial density along x (breakpoints, then values);
+# only the shape matters, phi is renormalized and num_part sets the total
+# no init_profile_x/_val: uniform initial density
+
+# independent realizations along y
+is_ensemble_dir = 0 1
+
+# Initial seeding with a minimum separation along x (here the WCA cutoff
+# 2^(1/6)*a). Needs x as the only non-ensemble direction, x periodic, and level 1
+# covering the domain. Each realization: hard rods of this length, uniform over
+# non-overlapping configurations on the periodic line at the largest density
+# (0.15; Poisson count), then each particle kept with probability
+# rho(x)/0.15 from init_profile_x/_val. No pair is closer than the separation,
+# the mean density is exactly the profile, and the counts per segment are
+# slightly sub-Poisson (var/mean ~0.8 here). Independent of dx.
+# <= 0 = random per-cell seeding, int(num_part*phi*cellvol + rand) particles per
+# cell (dx dependent, and pairs can start overlapping).
+amr.part_init_min_sep = 1.122462048309373
+
+# *****************************************************************
+# Are we restarting from an existing checkpoint file?
+# *****************************************************************
+#amr.restart  = chk100000 # restart from this checkpoint file
+
+# *****************************************************************
+# Problem size and geometry
+# *****************************************************************
+geometry.prob_lo     =    0.0     0.0
+geometry.prob_hi     = 1200.0  4000.0
+geometry.is_periodic =    1       1
+
+# *****************************************************************
+# VERBOSITY
+# *****************************************************************
+amr.v              = 1       # verbosity in Amr
+
+# *****************************************************************
+# Resolution and refinement
+# *****************************************************************
+# dx = dy = 1: along x one cell per unit length; along y one cell per realization
+amr.n_cell          = 1200 4000
+amr.max_grid_size_x = 200 200
+amr.max_grid_size_y = 200 200
+
+# particles live on level 1, which covers the whole domain (Tagging.H tags
+# every cell) at the same resolution
+amr.max_level       = 1
+amr.ref_ratio       = 1
+amr.use_particles   = 1      # Turn particles on or off
+
+# Interaction potential: WCA
+#   U = 4*eps*((a/r)^12 - (a/r)^6) + eps for r < 2^(1/6)*a, 0 otherwise
+amr.use_int_pot     = 1
+amr.ip_type         = wca
+amr.ip_eps          = 720000.  # = num_part, i.e. eps = 1 per pair
+amr.ip_R            = 1.       # a
+#amr.ip_range       = 1.122462 # defaults to the WCA cutoff 2^(1/6)*a
+amr.ip_wca_rcap     = 0.8      # caps only the level-0 SPDE mesh kernel
+amr.ip_wca_cap_part = 0        # 0 = exact WCA force on the particles
+
+amr.use_ext_pot     = 0
+
+# *****************************************************************
+# Control of grid creation
+# *****************************************************************
+amr.blocking_factor_x = 2
+amr.blocking_factor_y = 2
+
+amr.regrid_int      = 100000000  # never regrid
+
+amr.n_error_buf = 0 0
+amr.grid_eff = 0.96
+
+# *****************************************************************
+# Time step control
+# *****************************************************************
+adv.fixed_dt       = 1.e-4   # overrides the cfl estimate
+adv.cfl            = 0.03125 # unused with adv.fixed_dt
+
+# *****************************************************************
+# Particle dynamics only
+# *****************************************************************
+# 1 = skip the level-0 SPDE (Dean-Kawasaki) advance, its flux-register reflux,
+# and the FFT setup of the interaction kernel (no Uhat or continuum stability
+# printout). Level 0 then just holds the particle density, averaged down from
+# level 1 every step. Only valid when level 1 covers the whole domain, as here;
+# the code aborts otherwise. Without adv.fixed_dt, dt still comes from the
+# grid diffusion limit cfl*2/(D*sum_d 4/dx_d^2).
+# 0 = also advance the SPDE on level 0 each step (its result is overwritten
+# from the particles when level 1 covers the domain, so it only costs time).
+adv.particles_only = 1
+
+# *****************************************************************
+# Should we reflux at coarse-fine boundaries?
+# *****************************************************************
+adv.do_reflux = 1
+
+# *****************************************************************
+# Tagging: needs a level-1 entry; Tagging.H tags every cell regardless
+# *****************************************************************
+adv.phierr = 10. 10.
+
+# *****************************************************************
+# Plotfile name and frequency
+# *****************************************************************
+amr.plot_file  = plt_wca_   # root name of plot file
+amr.plot_int   = 100000     # every t = 10; if negative then no plot files
+# Plotfile mesh variables (levels 0 and 1):
+#   measure, phi0 : both phi, the density normalized to integrate to 1;
+#                   here the density per unit length in a realization is
+#                   rho = phi*num_part*dy = phi*720000
+#   number        : phi*cellvol*num_part, the particle count per cell
+# With amr.ref_ratio = 1 the plotfile writer stores level 1 refined by 2
+# (piecewise-constant copies), so level-1 "number" repeats each cell's count
+# in 2x2 sub-cells: sum it on level 0, or divide the level-1 sum by 4.
+amr.plot_particles = 0      # 1 = also write the particles into each plotfile,
+                            # in <plotfile>/particles (id, cpu, x, y, and
+                            # xold/yold/zold = position at the start of the step);
+                            # about 30 MB per plotfile at 720000 particles
+
+# *****************************************************************
+# Checkpoint name and frequency
+# *****************************************************************
+amr.chk_file = chk      # root name of checkpoint file
+amr.chk_int  = 100000   # if negative then no checkpoint files
