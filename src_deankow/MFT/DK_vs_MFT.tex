@@ -1,0 +1,383 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\keff}{k_{\mathrm{eff}}}
+\newcommand{\Uh}{\hat U}
+\newcommand{\MF}{\mathrm{MF}}
+\newcommand{\vir}{\mathrm{vir}}
+\emergencystretch=3em
+
+\title{Mean-field Dean--Kawasaki versus macroscopic fluctuation theory:\\
+virial coefficients, free energy, structure factor and diffusivity}
+\author{FHDeX}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent This note explains why the coarse-grained Dean--Kawasaki equation
+(DKE) solved in \code{src\_deankow/interaction} and macroscopic fluctuation
+theory (MFT) with the exact transport coefficients, solved in
+\code{src\_deankow/MFT}, predict different long-wavelength statics and
+dynamics for interacting Brownian particles. It also explains why the
+nonlinearity and the multiplicative noise of the DKE, and refining its grid,
+do not remove the difference. The example throughout is the 1D Gaussian-core
+potential of Grabsch, Venturelli and B\'enichou (arXiv:2504.08560,
+supplementary material, Sec.~II), whose notation (S$n$) we follow for the
+equation numbers quoted from it.
+
+\section{Microscopic model}
+
+$N$ Brownian particles interact through a pair potential $V$:
+\begin{equation}\label{eq:langevin}
+  \dot x_i = -\mu_0 \sum_{j\neq i} V'(x_i-x_j) + \sqrt{2D_0}\,\xi_i(t),
+  \qquad D_0=\mu_0 k_BT,
+\end{equation}
+with independent unit white noises $\xi_i$. We set $\mu_0=k_BT=D_0=1$ and use
+\begin{equation}
+  V(r) = \varepsilon\, e^{-r^2/\ell^2}.
+\end{equation}
+In 1D, the dimensionless control parameters are the coupling $\beta\varepsilon$
+and the density $\rho\ell$ (particles per interaction range). The potential has
+no hard core, so particles can pass each other.
+
+\section{MFT: exact transport coefficients}
+
+On large scales the density obeys
+\begin{equation}\label{eq:mft}
+  \partial_t\rho = \partial_x\!\left[D(\rho)\,\partial_x\rho
+     + \sqrt{\sigma(\rho)/\Lambda}\;\eta\right],
+\end{equation}
+where the transport coefficients are fixed by the microscopic model.
+
+\paragraph{Mobility.} $\sigma$ is the linear response of the mean current to a
+uniform force $F_0$ on all particles, $\langle j\rangle = \sigma F_0/(2k_BT)$.
+A uniform force is removed by a Galilean change of frame, so every particle
+drifts at $\mu_0F_0$ whatever the interactions, and
+\begin{equation}\label{eq:sigma}
+  \sigma(\rho) = 2\mu_0 k_BT\,\rho = 2\rho \qquad\text{(S56)}.
+\end{equation}
+This is exact and contains no information about $V$.
+
+\paragraph{Diffusivity.} The fluctuation--dissipation relation of MFT,
+$2k_BT\,D/\sigma = f''(\rho)$ (S51), with $f$ the equilibrium free energy
+density, then gives
+\begin{equation}\label{eq:D}
+  D(\rho) = \mu_0\,\rho f''(\rho) = \mu_0\,\partial_\rho P(\rho)
+  \qquad\text{(S60)},
+\end{equation}
+using $\partial_\rho P = \rho f''$ for the pressure $P=\rho f'-f$. $D$ is
+therefore entirely thermodynamic: it is the inverse compressibility.
+
+\paragraph{Virial expansion.} With
+$P/k_BT = \rho + B_2\rho^2 + B_3\rho^3 + B_4\rho^4 + \dots$,
+\begin{equation}\label{eq:Dvir}
+  D_\vir(\rho) = 1 + 2B_2\rho + 3B_3\rho^2 + 4B_4\rho^3 + \dots
+\end{equation}
+In 1D, with the Mayer function $f_M(x) = e^{-\beta V(x)}-1$,
+\begin{align}
+  B_2 &= -\tfrac12\int f_M(x)\,dx, \qquad
+  B_3 = -\tfrac13\iint f_M(x)\,f_M(y)\,f_M(y-x)\,dx\,dy, \\
+  B_4 &= -\tfrac18\int\!\!\int\!\!\int \big[\,3\,f_{12}f_{23}f_{34}f_{41}
+        + 6\,f_{12}f_{23}f_{34}f_{41}f_{13}
+        + f_{12}f_{13}f_{14}f_{23}f_{24}f_{34}\big]\,dx_2\,dx_3\,dx_4 ,
+\end{align}
+with $x_1=0$ and $f_{ij}=f_M(x_i-x_j)$. Table~\ref{tab:B} lists the
+coefficients for the Gaussian core, computed by quadrature. (The quadrature
+reproduces the Tonks values $B_2=B_3=B_4=1$ for hard rods of unit length to
+$1\%$, and is converged in the grid spacing for the Gaussian.) For
+$\beta\varepsilon=2$ it reproduces S102,
+$D = 1 + 1.97269\rho + 2.12375\rho^2$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ccccc}
+\toprule
+$\beta\varepsilon$ & $B_2/\ell$ & $B_3/\ell^2$ & $B_4/\ell^3$ & $B_2^\MF/\ell = \sqrt\pi\,\beta\varepsilon/2$ \\
+\midrule
+1 & 0.6426 & 0.2104 & $-0.0380$ & 0.886 \\
+2 & 0.9863 & 0.7079 & 0.2362 & 1.772 \\
+3 & 1.1887 & 1.1704 & 0.8390 & 2.659 \\
+5 & 1.4124 & 1.8081 & 2.0354 & 4.431 \\
+\bottomrule
+\end{tabular}
+\caption{Virial coefficients of the 1D Gaussian core, and the mean-field value
+of $B_2$ (Sec.~\ref{sec:dk}).}
+\label{tab:B}
+\end{table}
+
+\section{Structure factor and intermediate scattering function}\label{sec:S}
+
+Linearize \eqref{eq:mft} about a uniform $\bar\rho$. A Fourier mode is then an
+Ornstein--Uhlenbeck process,
+\begin{equation}
+  \partial_t\delta\hat\rho_k = -D k^2\,\delta\hat\rho_k
+     + ik\sqrt{\sigma/\Lambda}\;\hat\eta_k ,
+\end{equation}
+which relaxes at rate $Dk^2$ and is driven with strength $\sigma k^2/\Lambda$.
+Its stationary variance is $\sigma/(2D\Lambda)$ per unit volume, so with the
+normalization $S = \Lambda\langle|\delta\hat\rho_k|^2\rangle/(\bar\rho V)$
+(that of $|\hat n_k|^2/N$ for particle counts $n$) the factors of $k^2$ cancel:
+\begin{equation}\label{eq:S}
+  S(k\to0) = \frac{\sigma(\bar\rho)}{2\bar\rho\,D(\bar\rho)} = \frac{1}{D(\bar\rho)}
+  = \frac{k_BT}{\partial_\rho P},
+\end{equation}
+the compressibility sum rule. The noise injects fluctuations at a rate set by
+$\sigma$ and the current removes them at a rate set by $D$; since $\sigma$ is
+fixed by \eqref{eq:sigma}, $S$ depends on $D$ alone. The intermediate
+scattering function is
+\begin{equation}\label{eq:F}
+  F(k,\tau) = S(k)\,e^{-D k^2 \tau},
+\end{equation}
+so the same $D$ sets both the amplitude $F(k,0)=S=1/D$ and the decay rate
+$Dk^2$. A wrong $D$ gets both wrong, in a correlated way: a model that
+overestimates $D$ predicts too small an $S$ and too fast a decay.
+
+\section{Mean-field Dean--Kawasaki equation}\label{sec:dk}
+
+The coarse-grained DKE solved in \code{src\_deankow/interaction} is
+\begin{equation}\label{eq:dk}
+  \partial_t\rho = \partial_x\!\left[D_0\partial_x\rho
+     + \mu_0\rho\,\partial_x(U*\rho) + \sqrt{2D_0\rho/N}\;\eta\right],
+\end{equation}
+with $U*\rho$ the convolution with the pair potential. It is nonlinear (the
+drift is quadratic in $\rho$) and has multiplicative noise.
+
+\paragraph{Free energy.} \eqref{eq:dk} is a gradient flow with mobility
+$\mu_0\rho$ of the functional
+\begin{equation}\label{eq:FMF}
+  \mathcal F_\MF[\rho] = k_BT\!\int(\rho\ln\rho-\rho)\,dx
+     + \frac12\iint \rho(x)\,U(x-y)\,\rho(y)\,dx\,dy ,
+\end{equation}
+since $\mu_0\rho\,\partial_x(\delta\mathcal F_\MF/\delta\rho)
+= D_0\partial_x\rho + \mu_0\rho\,\partial_x(U*\rho)$, and its noise satisfies
+detailed balance with that mobility. Its stationary measure is therefore,
+formally, $\propto e^{-\beta\mathcal F_\MF[\rho]}$. The nonlinear terms and the
+multiplicative noise are exactly what is needed for this; they do not add
+physics beyond $\mathcal F_\MF$.
+
+\paragraph{Equation of state and diffusivity.} For uniform $\rho$, the free
+energy density is $f_\MF = k_BT(\rho\ln\rho-\rho) + \tfrac12\Uh(0)\rho^2$, with
+$\Uh(0)=\int U\,dx = \sqrt\pi\,\varepsilon\ell$. Hence
+\begin{equation}\label{eq:DMF}
+  P_\MF = k_BT\rho + \tfrac12\Uh(0)\rho^2, \qquad
+  D_\MF = \mu_0\partial_\rho P_\MF = 1 + \beta\Uh(0)\,\rho
+        = 1 + \sqrt\pi\,\beta\varepsilon\,\rho\ell ,
+\end{equation}
+which is the linearized-DK result S103. The mean-field equation of state has
+$B_2^\MF = \tfrac12\beta\Uh(0)$ and $B_3^\MF=B_4^\MF=\dots=0$.
+
+\paragraph{Structure factor.} The Gaussian fluctuations of \eqref{eq:FMF} give
+the random-phase approximation
+\begin{equation}\label{eq:SMF}
+  S_\MF(k) = \frac{1}{1+\beta\bar\rho\,\Uh(k)}, \qquad
+  S_\MF(0) = \frac{1}{D_\MF}.
+\end{equation}
+The mean-field DKE is thus internally consistent: it obeys the same
+fluctuation--dissipation balance \eqref{eq:S}, but with the mean-field
+pressure in place of the true one.
+
+\section{Why the two differ}\label{sec:why}
+
+\paragraph{Mayer function versus potential.} Comparing \eqref{eq:Dvir} with
+\eqref{eq:DMF}, mean field replaces the Mayer function by its first-order
+expansion,
+\begin{equation}
+  f_M = e^{-\beta V}-1 \;\longrightarrow\; -\beta V,
+\end{equation}
+which gives $B_2^\MF = \tfrac12\beta\int V$ in place of
+$B_2 = -\tfrac12\int f_M$, and it drops all higher virial coefficients. Since
+$e^{-u}-1 > -u$ for $u>0$, a repulsive potential always has $B_2 < B_2^\MF$
+(Table~\ref{tab:B}): mean field overestimates the pressure, and with it $D$,
+and underestimates $S$.
+
+\paragraph{Direct correlation function.} Equivalently, write the exact
+Ornstein--Zernike form $S(k) = 1/(1-\bar\rho\,\hat c(k))$. The RPA
+\eqref{eq:SMF} is the closure $c(r) = -\beta V(r)$. At low density the exact
+direct correlation function is instead $c(r)\simeq f_M(r)$, which gives
+$S(0)\simeq 1/(1+2B_2\bar\rho)$, consistent with \eqref{eq:S} and
+\eqref{eq:Dvir} to first order in $\bar\rho$.
+
+\paragraph{Physical picture.} Mean field lets every particle feel the average
+density at every separation, i.e.\ it sets the pair correlation $g(r)=1$.
+In reality particles avoid each other inside the core, $g(r)\approx
+e^{-\beta V(r)}<1$ for $r\lesssim\ell$, so each feels less repulsion than the
+average implies. The true pressure rises more slowly with $\rho$, the system
+is more compressible, $S$ is larger and collective diffusion is slower.
+
+\paragraph{When mean field is accurate.} The discrepancy is controlled by how
+far $e^{-\beta V}-1$ departs from $-\beta V$, which grows with $\beta\varepsilon$.
+It also shrinks at high density, where each particle overlaps many
+neighbours within $\ell$ and its own pair correlations matter less; this is
+the regime $\rho\ell\gtrsim 0.6$ where S103 is found to be accurate at
+$\beta\varepsilon=2$. Table~\ref{tab:gap} gives the size of the effect. The
+virial series is truncated after $B_4$; the column ``$\rho^3$ term'' shows its
+last retained contribution to $D$, a measure of how far it can be trusted.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{cccccccc}
+\toprule
+$\beta\varepsilon$ & $\rho\ell$ & $D_\MF$ & $D_\vir$ (to $\rho^2$) & $\rho^3$ term
+  & $S_\MF$ & $S_\vir$ & gap in $S$ \\
+\midrule
+1 & 0.1 & 1.177 & 1.135 & $-0.000$ & 0.849 & 0.881 & 3.6\% \\
+1 & 0.4 & 1.709 & 1.615 & $-0.010$ & 0.585 & 0.619 & 5.5\% \\
+2 & 0.2 & 1.709 & 1.479 & $+0.008$ & 0.585 & 0.676 & 13\% \\
+3 & 0.2 & 2.063 & 1.616 & $+0.027$ & 0.485 & 0.619 & 22\% \\
+3 & 0.3 & 2.595 & 2.029 & $+0.091$ & 0.385 & 0.493 & 22\% \\
+5 & 0.1 & 1.886 & 1.337 & $+0.008$ & 0.530 & 0.748 & 29\% \\
+5 & 0.2 & 2.772 & 1.782 & $+0.065$ & 0.361 & 0.561 & 36\% \\
+\bottomrule
+\end{tabular}
+\caption{Mean-field and virial diffusivity and $S(k\to0)=1/D$ for the 1D
+Gaussian core. $S_\vir$ is computed from $D_\vir$ to $\rho^2$.}
+\label{tab:gap}
+\end{table}
+
+\noindent At $\beta\varepsilon=1$ the gap stays at 4--6\% for all
+$\rho\ell\le0.4$: raising the density does not magnify it. At
+$\beta\varepsilon=3$, $\rho\ell=0.2$ it is 22\% in $S$ (25\% in $D$) while
+the $\rho^3$ term is only 1.7\% of $D$, so including $B_4$ keeps the virial
+$D$ accurate. This is the parameter set of the \code{e3r02} inputs. Note also
+that the size of the gap is relative to the interaction correction $D-1$, not
+to $D$: at $\beta\varepsilon=1$, $\rho\ell=0.1$, mean field overestimates
+$D-1$ by about 30\%, but $D-1$ is only 13--18\% of $D$.
+
+\section{Nonlinearity, multiplicative noise and coarse-graining}\label{sec:cg}
+
+The DKE solved on a grid is nonlinear with multiplicative noise, which raises
+the question of whether it captures more than its linearization S103. At the
+resolutions where it is well defined, it does not.
+
+\paragraph{Gaussian level: independent of the grid.} The mesh kernel is the
+cell-pair average of $U$, $U_m = \Delta x^{-2}\int_{\text{cell }0}\int_{\text{cell }m}U(x-y)$.
+It satisfies $\sum_m U_m\,\Delta x = \int U\,dx$ exactly, so
+$\Uh_{\Delta x}(0)=\Uh(0)$ and the linearized discrete DKE gives
+$S(k\to0) = 1/D_\MF$ at every $\Delta x$. Any dependence on $\Delta x$ must come
+from the non-Gaussian terms.
+
+\paragraph{Cells much larger than $\ell$.} Two particles in the same cell
+interact through $\beta U_0 \approx \beta\varepsilon\sqrt\pi\,\ell/\Delta x$,
+e.g.\ $0.009$ at $\beta\varepsilon=1$, $\Delta x=200\ell$, and $0.05$ at
+$\beta\varepsilon=3$, $\Delta x=100\ell$. At such weak coupling
+$e^{-\beta U_0}-1 = -\beta U_0\,(1+O(\beta U_0))$: the coarse model's own
+second virial coefficient is the mean-field one, to within
+$\sim\beta U_0/2\lesssim 3\%$ of the interaction correction. The
+short-range correlations that distinguish $B_2$ from $B_2^\MF$ live at
+separations $\lesssim\ell$, below the grid scale, and are averaged away. The
+remaining nonlinear effects are fluctuation corrections of relative size
+$\langle\delta\rho^2\rangle/\bar\rho^2 \approx 1/N_{\rm cell}$, with
+$N_{\rm cell}=\bar\rho\,\Delta x$ particles per cell. They multiply the
+interaction correction $D-1$ and are therefore of order $1\%$ of $D$ for
+$N_{\rm cell}=20$. (The ideal-gas part is unaffected by the nonlinearity: with
+constant $D_0$ and $\sigma=2\rho$, the equation for
+$\langle\delta\rho\,\delta\rho\rangle$ closes exactly and gives $S=1$.)
+
+\paragraph{Cells comparable to or smaller than $\ell$.} When the grid resolves
+the core, the nonlinear terms do matter, but they do not reproduce the
+particles' exclusion statistics. The field $\rho$ is continuous; its entropy
+$\rho\ln\rho$ is Stirling's approximation to $\ln n!$ and is valid only for
+$N_{\rm cell}\gg1$. The interaction $\tfrac12\iint\rho U\rho$ includes each
+particle's interaction with itself. With $N_{\rm cell}\ll1$, relative
+fluctuations are of order $N_{\rm cell}^{-1/2}>1$, so $\rho$ is often near or
+below zero, where the noise is switched off. None of this is the Mayer factor
+$e^{-\beta V}$.
+
+The runs at $\Delta x=\ell$ ($\beta\varepsilon=1$, $\rho\ell=0.1$, so
+$N_{\rm cell}=0.1$) confirm this (Table~\ref{tab:dx1}). The particles follow
+the virial prediction, $1/D_\vir=0.881$, but the grid DKE falls below even the
+mean-field value: refining the grid moves it further from the exact result.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ccccc}
+\toprule
+$k\ell$ & DKE, $\Delta x=\ell$ & RPA $1/(1+\beta\bar\rho\Uh(k))$ & particles & $1/D_\vir$ ($k\to0$) \\
+\midrule
+0.105 & 0.799 & 0.850 & 0.877 & 0.881 \\
+0.628 & 0.818 & 0.862 & 0.893 & \\
+1.15  & 0.857 & 0.889 & 0.924 & \\
+2.72  & 0.970 & 0.973 & 0.995 & \\
+\bottomrule
+\end{tabular}
+\caption{$F(k,0)$ measured at $\beta\varepsilon=1$, $\rho\ell=0.1$ on a grid
+with $\Delta x=\ell$ (0.1 particles per cell), for the grid DKE and the
+particles, against the mean-field (RPA) value with
+$\Uh(k)=\sqrt\pi\,\varepsilon\ell\,e^{-k^2\ell^2/4}$.}
+\label{tab:dx1}
+\end{table}
+
+\noindent The coarse-grained DKE is therefore well defined only with many
+particles per cell, and in that regime it is a mean-field theory at the scale
+of the interaction: its long-wavelength $S$ and $D$ are $1/D_\MF$ and
+$D_\MF$ for any $\Delta x$. Beyond-mean-field thermodynamics must be supplied
+explicitly, either through the exact $D(\rho)=\mu_0\partial_\rho P$ in MFT, or
+by the particle dynamics itself. The exact Dean equation for the empirical
+density $\sum_i\delta(x-x_i)$ does contain the correct physics, because it is
+exact; it is the coarse-graining to a smooth field on cells larger than $\ell$,
+with a smoothed kernel, that reduces it to mean field.
+
+\section{Consequences for the ISF comparison}
+
+For the \code{e3r02} runs ($\beta\varepsilon=3$, $\rho\ell=0.2$, $\Delta x=100\ell$,
+20 particles per cell), \eqref{eq:S} and \eqref{eq:F} give the predictions of
+Table~\ref{tab:pred}, with $\keff^2=(4/\Delta x^2)\sin^2(k\Delta x/2)$ in the
+decay rate of the grid models.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+model & $D$ & $S(k\to0)=F(k,0)$ & decay rate \\
+\midrule
+particles (exact)            & $D_\vir = 1.643$ & 0.609 & $D_\vir k^2$ \\
+MFT, virial $D(\rho)$        & 1.643 & 0.609 & $D_\vir\keff^2$ \\
+MFT, mean-field $D(\rho)$    & 2.063 & 0.485 & $D_\MF\keff^2$ \\
+coarse-grained DKE           & $D_\MF = 2.063$ & 0.485 & $D_\MF\keff^2$ \\
+\bottomrule
+\end{tabular}
+\caption{Predicted equilibrium statics and dynamics at $\beta\varepsilon=3$,
+$\rho\ell=0.2$.}
+\label{tab:pred}
+\end{table}
+
+\noindent Agreement between the DKE and MFT with the mean-field $D$ checks the
+consistency of the two solvers; it is not a test of physics, since both share
+the same linear theory. The physics test is whether the particles follow the
+virial row (MFT) or the mean-field row (DKE).
+
+\section{Summary}
+
+\begin{enumerate}[nosep]
+  \item For Brownian particles $\sigma=2\mu_0k_BT\rho$ exactly, so
+        $S(k\to0)=\sigma/(2\rho D)=1/D$, and $D=\mu_0\partial_\rho P$ is the
+        inverse compressibility: statics and collective dynamics are both set by
+        the equation of state.
+  \item MFT with $D$ from the virial expansion uses the exact equation of
+        state, including pair correlations through the Mayer function
+        $e^{-\beta V}-1$.
+  \item The coarse-grained DKE is the gradient flow of the mean-field free
+        energy \eqref{eq:FMF}. Its equation of state has
+        $B_2^\MF=\tfrac12\beta\Uh(0)$ and no higher coefficients, i.e.\ it sets
+        $g(r)=1$. It overestimates the pressure and $D$ and underestimates $S$.
+  \item Its nonlinearity and multiplicative noise only make its stationary
+        measure $e^{-\beta\mathcal F_\MF}$; with many particles per cell their
+        corrections are $O(1/N_{\rm cell})$ of the interaction correction.
+        Refining the grid does not recover the virial result, and at
+        $N_{\rm cell}\ll1$ the field theory itself is not reliable.
+  \item The gap grows with $\beta\varepsilon$, and is about 22\% in $S$ at
+        $\beta\varepsilon=3$, $\rho\ell=0.2$, where the virial $D$ is still
+        accurate.
+\end{enumerate}
+
+\end{document}

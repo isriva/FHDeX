@@ -1,0 +1,74 @@
+# *****************************************************************
+# Intermediate scattering function F(k,tau) (and S(k)) of the 1D MFT SPDE
+#   d rho/dt = d/dx[ D(rho) d rho/dx + sqrt(sigma(rho)/Lambda) eta ]
+# for the SSEP (D = 1, sigma = 2 rho (1 - rho)) at a uniform density 0.5,
+# run as 1000 independent realizations stacked along y.
+#
+#   x: the physical 1D periodic domain, L = 256, one cell per unit length
+#   y: 1000 rows of cells, one realization per row (is_ensemble_dir = 0 1)
+#
+# Expected: F(k,0) = S(k) = 1 - rhobar = 0.5, and
+#   F(k,tau) = S(k) exp(-D k_eff^2 tau), k_eff^2 = (4/dx^2) sin^2(k dx/2)
+# *****************************************************************
+
+max_step  = 30000           # t = 1500 at dt = 0.05
+
+seed = 0
+
+amrex.fpe_trap_invalid = 1
+
+# *****************************************************************
+# Specific to this application
+# *****************************************************************
+D_rho     = "1."
+sigma_rho = "2.*rho*(1.-rho)"
+Lambda    = 100.
+dorand    = 1.
+
+rho0 = 0.5
+
+# independent realizations along y
+is_ensemble_dir = 0 1
+
+# *****************************************************************
+# Intermediate scattering function and structure factor, in steps of dt = 0.05
+# *****************************************************************
+# x modes q = 4, 12, 20, 28 of L = 256, k = 2 pi q/L (q <= nx/2)
+isf_n_modes       = 4
+isf_q_min         = 4
+isf_q_stride      = 8
+isf_dt_meas       = 10        # lag spacing, t = 0.5
+isf_t_max         = 1000      # largest lag, t = 50
+isf_window_stride = 100       # a new time origin every t = 5
+isf_relax_time    = 10000     # first time origin at t = 500
+isf_do_1D         = 1         # FFT each row (realization) along x separately
+isf_plot_file     = isf_mft   # isf_mft_1D_q<q>.dat, rewritten at each plotfile
+
+# static S(k) from the full 2D FFT; with independent rows it does not depend on
+# ky, so S(kx) is any ky column of plt_SF_mag (or its average over ky)
+struct_fact_int = 100
+n_steps_skip    = 10000
+
+# *****************************************************************
+# Problem size and geometry
+# *****************************************************************
+geometry.prob_lo     =   0.0     0.0
+geometry.prob_hi     = 256.0  1000.0
+geometry.is_periodic =   1       1
+
+# *****************************************************************
+# Resolution: dx = dy = 1
+# *****************************************************************
+amr.n_cell        = 256 1000
+amr.max_grid_size = 256 125
+
+# *****************************************************************
+# Time step control
+# *****************************************************************
+adv.fixed_dt = 0.05         # D dt/dx^2 = 0.05 (forward Euler limit 0.5)
+
+# *****************************************************************
+# Plotfile name and frequency
+# *****************************************************************
+amr.plot_file = plt_mft_1d_
+amr.plot_int  = 10000

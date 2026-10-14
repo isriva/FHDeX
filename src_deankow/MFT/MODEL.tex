@@ -1,0 +1,251 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\keff}{k_{\mathrm{eff}}}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\emergencystretch=3em
+
+\title{Fluctuating hydrodynamics of macroscopic fluctuation theory\\
+in \code{src\_deankow/MFT}}
+\author{FHDeX}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent This note describes the stochastic PDE solved in
+\code{src\_deankow/MFT}, its discretization, the algorithm, and two test
+cases: the non-interacting gas and the symmetric simple exclusion process
+(SSEP). The spatial and temporal discretization are those of the
+Dean--Kawasaki solver in \code{src\_deankow/interaction}, without
+particles, mesh refinement or the nonlocal interaction. The code is built
+from \code{exec/dean\_kow/MFT}.
+
+\section{Model}
+
+The density $\rho(\mathbf{x},t)$ obeys
+\begin{equation}\label{eq:mft}
+  \partial_t \rho = \nabla\cdot\Big[ D(\rho)\,\nabla\rho
+     + \sqrt{\frac{\sigma(\rho)}{\Lambda}}\;\boldsymbol{\eta} \Big],
+\end{equation}
+where $\boldsymbol{\eta}$ is space-time white noise with
+$\langle \eta_\alpha(\mathbf{x},t)\,\eta_\beta(\mathbf{x}',t')\rangle
+ = \delta_{\alpha\beta}\,\delta(\mathbf{x}-\mathbf{x}')\,\delta(t-t')$.
+The diffusivity $D(\rho)$ and the mobility $\sigma(\rho)$ are given in the
+inputs as \code{amrex::Parser} expressions in the variable \code{rho}
+(\code{D\_rho}, \code{sigma\_rho}); $\Lambda$ is the input \code{Lambda}.
+
+\paragraph{Meaning of $\Lambda$.}
+For independent Brownian particles of diffusivity $D$, the number density
+$n$ obeys the Dean--Kawasaki equation
+$\partial_t n = D\nabla^2 n + \nabla\cdot(\sqrt{2Dn}\,\boldsymbol\eta)$.
+Writing $n=\Lambda\rho$ gives \eqref{eq:mft} with $D(\rho)=D$ and
+$\sigma(\rho)=2D\rho$. So $\Lambda\rho$ is a particle number density and a
+cell of volume $\Delta V$ holds $\Lambda\rho\,\Delta V$ particles. For a
+lattice gas, $\rho$ is the occupation fraction and $\Lambda\Delta V$ is the
+number of lattice sites in the cell. The noise is weak, and the equation is
+meaningful as a coarse-grained model, when $\Lambda\rho\,\Delta V\gg1$
+(for the SSEP also $\Lambda(1-\rho)\Delta V\gg1$). The relative
+fluctuation of a cell density is of order $(\Lambda\rho\,\Delta V)^{-1/2}$.
+
+\paragraph{Examples.}
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+model & $D(\rho)$ & $\sigma(\rho)$ \\
+\midrule
+non-interacting gas (Dean--Kawasaki, $N=\Lambda$) & $D$ & $2D\rho$ \\
+SSEP & $1$ & $2\rho(1-\rho)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Equilibrium fluctuations.}
+Linearizing \eqref{eq:mft} about a uniform state $\bar\rho$, the Fourier
+modes of $\delta\rho=\rho-\bar\rho$ are Ornstein--Uhlenbeck processes
+with relaxation rate $\bar D k^2$, $\bar D = D(\bar\rho)$, and noise strength
+$\bar\sigma k^2/\Lambda$, $\bar\sigma=\sigma(\bar\rho)$. The code reports the
+static structure factor normalized as $|\hat n|^2/N$ with
+$n=\Lambda\rho\,\Delta V$ the cell counts and $N=\Lambda\bar\rho V$:
+\begin{equation}\label{eq:S}
+  S(k) = \frac{\Lambda}{\bar\rho V}\,\big\langle|\delta\hat\rho(\mathbf{k})|^2\big\rangle
+       = \frac{\sigma(\bar\rho)}{2\bar\rho\,D(\bar\rho)},
+\end{equation}
+where $\delta\hat\rho(\mathbf{k}) = \int_V \delta\rho\, e^{-i\mathbf{k}\cdot\mathbf{x}}\,d\mathbf{x}$.
+The intermediate scattering function is
+$F(k,\tau) = \frac{\Lambda}{\bar\rho V}\langle\delta\hat\rho(\mathbf{k},t+\tau)\,
+\delta\hat\rho(\mathbf{k},t)^*\rangle = S(k)\,e^{-\bar Dk^2\tau}$.
+The non-interacting gas has $S=1$ and the SSEP has $S=1-\bar\rho$.
+
+\section{Discretization}
+
+\paragraph{Grid.}
+Cell-centred densities $\rho_{\mathbf{i}}$ on a uniform grid with spacing
+$\Delta x_d$ and cell volume $\Delta V=\prod_d\Delta x_d$. Fluxes live on the
+faces. In one direction (the others are analogous), the face $i-\tfrac12$
+separates cells $i-1$ and $i$.
+
+\paragraph{Face densities.}
+The deterministic flux uses the arithmetic average
+$\rho_f = \tfrac12(\rho_{i-1}+\rho_i)$. The noise amplitude uses the average
+of the non-negative parts,
+$\rho_f^{+} = \tfrac12\big(\max(\rho_{i-1},0)+\max(\rho_i,0)\big)$, as the
+noise in \code{interaction} does, and $\sigma$ is clipped at zero:
+\begin{equation}\label{eq:flux}
+  F_{i-1/2} = D(\rho_f)\,\frac{\rho_i-\rho_{i-1}}{\Delta x}
+     + \sqrt{\max\!\big(\sigma(\rho_f^{+}),0\big)}\;W_{i-1/2}.
+\end{equation}
+The inner clip turns the noise off next to a cell with negative density for
+any $\sigma$ with $\sigma(0)=0$, including models with $\sigma>0$ for
+$\rho<0$, such as $\sigma=\rho^2$. The outer clip handles $\sigma<0$ for
+non-negative $\rho$, e.g.\ the SSEP for $\rho>1$.
+
+\paragraph{Noise.}
+$W_{i-1/2}$ are independent Gaussians with mean $0$ and variance
+$1/(\Lambda\,\Delta t\,\Delta V)$, i.e.\ white noise averaged over a cell
+volume and a time step, with the factor $1/\Lambda$ included. They are drawn
+by \code{MultiFabFillRandom} once per face and step. For $\sigma=2D\rho$ and
+$\Lambda=N$ this is the noise of \code{interaction}, whose variance
+$2D/(N\,\Delta t\,\Delta V)$ multiplies $\phi$.
+
+\paragraph{Walls.}
+Boundaries are periodic (\code{bc = 0}) or zero-density Dirichlet walls
+(\code{bc = 3}), treated as in \code{interaction}. On a wall face, the ghost
+density is $2\rho_b-\rho$ with $\rho_b=0$; both face densities are set to
+$\rho_b$; and the noise is multiplied by $\sqrt2$ (half-cell distance to the
+wall).
+
+\paragraph{Time stepping.}
+Euler--Maruyama,
+\begin{equation}\label{eq:update}
+  \rho_{\mathbf i}^{n+1} = \rho_{\mathbf i}^{n}
+   + \Delta t \sum_d \frac{F^n_{\mathbf i+\mathbf e_d/2}-F^n_{\mathbf i-\mathbf e_d/2}}{\Delta x_d},
+\end{equation}
+with all fluxes evaluated from $\rho^n$. The scheme is conservative: with
+periodic boundaries $\sum_{\mathbf i}\rho_{\mathbf i}\Delta V$ is constant to
+round-off.
+
+\paragraph{Ensemble directions.}
+Directions with \code{is\_ensemble\_dir = 1} carry no flux and no noise, so
+each row of cells along them is an independent realization. For example,
+\code{is\_ensemble\_dir = 0 1} in 2D runs $n_y$ independent 1D systems.
+
+\paragraph{Time step.}
+Unless \code{adv.fixed\_dt} is given,
+\begin{equation}
+  \Delta t = \mathrm{cfl}\,\frac{2}{D_{\max}\,\sum_{d\notin\mathrm{ens}} 4/\Delta x_d^2},
+\end{equation}
+the forward-Euler limit of the diffusion operator times \code{adv.cfl}.
+Here $D_{\max}$ is the maximum of $D$ over the cell values (and $D(0)$ if
+there is a wall). $\Delta t$ grows by at most a factor $1.1$ per step.
+
+\section{Algorithm}
+
+Each step of \code{main.cpp}:
+\begin{enumerate}[nosep]
+  \item swap $\rho^{\mathrm{old}}\leftrightarrow\rho^{\mathrm{new}}$ and fill
+        ghost cells (periodic and parallel);
+  \item compute $\Delta t$ (\code{est\_time\_step});
+  \item draw $W$ on every face of the non-ensemble directions
+        (\code{advance\_rho});
+  \item compute the face fluxes \eqref{eq:flux} (\code{compute\_flux\_x/y/z}
+        in \code{mykernel.H});
+  \item update the cells with \eqref{eq:update} (\code{update\_rho});
+  \item print $\int\rho$ before and after the step;
+  \item every \code{struct\_fact\_int} steps after \code{n\_steps\_skip},
+        accumulate $|\mathrm{FFT}(\rho)|^2$ for $S(\mathbf k)$; feed the ISF;
+  \item every \code{amr.plot\_int} steps, write the plotfile ($\rho$),
+        $S(\mathbf k)$ (\code{plt\_SF*} and the shell average
+        \code{sf\_kshell\_<step>.txt}) and the ISF (\code{<isf\_plot\_file>\_1D\_q<q>.dat}).
+\end{enumerate}
+The initial density is the uniform \code{rho0} or the piecewise-constant
+profile along $x$ given by \code{init\_profile\_x/\_val}, used as given (no
+renormalization). The normalization \eqref{eq:S} is obtained by passing
+\code{StructFact} the scaling $\bar\rho/(\Lambda\Delta V)$, with
+$\bar\rho$ the mean initial density; the ISF uses the same factor, so
+$F(k,0)=S(k)$. The ISF class is that of \code{interaction}: rolling windows
+of x modes, either per x pencil (\code{isf\_do\_1D = 1}, one realization per
+pencil) or from the $k_y=k_z=0$ modes of the full FFT.
+
+\section{Discrete equilibrium}
+
+For the linearized scheme on a periodic grid, a Fourier mode obeys
+$\delta\hat\rho^{n+1} = (1-a)\,\delta\hat\rho^{n} + \xi^n$, with
+$a = \Delta t\,\bar D\,\keff^2$ and
+$\keff^2 = \sum_d (4/\Delta x_d^2)\sin^2(k_d\Delta x_d/2)$. The divergence of
+the face noise has the same symbol $\keff^2$ as the discrete Laplacian, so
+the discrete fluctuation--dissipation balance holds up to the time step
+error:
+\begin{equation}\label{eq:Sdt}
+  S_{\Delta t}(\mathbf k) = \frac{S}{1-a/2},\qquad
+  F_{\Delta t}(\mathbf k,\tau) = S_{\Delta t}(\mathbf k)\,(1-a)^{\tau/\Delta t}.
+\end{equation}
+The Euler--Maruyama bias $1/(1-a/2)$ is largest at the grid scale. For the
+time step above, $a\le\mathrm{cfl}$, so at most $1/(1-\mathrm{cfl}/2)$.
+
+\section{Tests}
+
+\subsection{Non-interacting gas and SSEP in 2D}
+
+Input \code{exec/dean\_kow/MFT/inputs\_mft}: a periodic unit square with
+$64^2$ cells, $\bar\rho=0.3$, $D=1$, $\Lambda=10^6$ ($\Lambda\bar\rho\Delta V\approx73$
+particles per cell), $\mathrm{cfl}=0.1$ ($\Delta t=6.1\times10^{-6}$),
+20000 steps, $S$ sampled every 10 steps after step 8000 (1200 samples).
+The non-interacting gas uses \code{sigma\_rho = "2.*rho"}, the SSEP
+\code{sigma\_rho = "2.*rho*(1.-rho)"}.
+
+\begin{center}
+\begin{tabularx}{\linewidth}{lccL}
+\toprule
+ & theory $S$ & shells $20<k<120$ & $\Lambda\,\mathrm{var}(\rho)\,\Delta V/\bar\rho$ (all $k$) \\
+\midrule
+non-interacting & $1$ & $1.025$ & $1.071$ \\
+SSEP & $1-\bar\rho=0.7$ & $0.712$ & $0.736$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent The excess over the theory is the Euler--Maruyama bias
+\eqref{eq:Sdt}: its average over all modes is $\approx1.05$ here, which
+accounts for the real-space variance, and the highest shell
+($k\approx195$) gives $1.063$ and $0.743$ against $1.053$ and $0.737$
+predicted. The lowest shells hold few modes and relax on
+$1/(\bar D k^2)\approx0.025$, comparable to the sampling window, so they
+are noisier. With periodic boundaries the total mass changes only at
+round-off ($\sim10^{-15}$).
+
+\subsection{1D ensemble: intermediate scattering function of the SSEP}
+
+Input \code{inputs\_mft\_1d\_ensemble\_isf}: $1000$ independent periodic 1D
+systems (\code{is\_ensemble\_dir = 0 1}) of length $L=256$ with
+$\Delta x=1$, SSEP at $\bar\rho=0.5$, $\Lambda=100$,
+$\Delta t = 0.05$ ($\bar D\Delta t/\Delta x^2=0.05$), 30000 steps. The ISF
+of the modes $q=4,12,20,28$ ($k=2\pi q/L$) is averaged over pencils and
+over 191 time windows, starting at step 10000 with lags up to $\tau=50$.
+
+\begin{center}
+\begin{tabular}{rccccc}
+\toprule
+$q$ & $F(k,0)$ & $F_{\Delta t}(k,0)$ & $F(k,5)$ & $F_{\Delta t}(k,5)$ & $\max_\tau|F-F_{\Delta t}|$ \\
+\midrule
+ 4 & 0.496 & 0.500 & 0.473 & 0.477 & 0.004 \\
+12 & 0.498 & 0.501 & 0.323 & 0.325 & 0.004 \\
+20 & 0.501 & 0.503 & 0.152 & 0.153 & 0.003 \\
+28 & 0.502 & 0.506 & 0.050 & 0.051 & 0.003 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Measured values agree with \eqref{eq:Sdt} to within about 1\% of
+$S$ at all lags, and $F(k,0)$ agrees with the static $S=1-\bar\rho=0.5$.
+
+\end{document}
