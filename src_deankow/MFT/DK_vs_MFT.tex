@@ -356,6 +356,104 @@ consistency of the two solvers; it is not a test of physics, since both share
 the same linear theory. The physics test is whether the particles follow the
 virial row (MFT) or the mean-field row (DKE).
 
+\section{Correcting the DKE: an effective interaction kernel}\label{sec:ceff}
+
+\paragraph{Not a renormalized $D_0$.} The kinetic coefficients of the DKE are
+already exact: its mobility $\mu_0\rho$ is the exact $\sigma/(2k_BT)$
+\eqref{eq:sigma}, and coarse-graining does not change it. Rescaling $D_0$
+consistently (Fickian term, drift mobility and noise) only changes the time
+scale: $D_c = D_0(1+\beta\bar\rho\Uh(0))$ and $\sigma = 2D_0\bar\rho$ give
+$S = 1/(1+\beta\bar\rho\Uh(0))$ for any $D_0$. Changing only the Fickian term,
+to $D_0' = D_\vir - \beta\bar\rho\Uh(0)$, reproduces $D_\vir$ at the linear
+level, but $D_0'$ must depend on $\rho$, it breaks detailed balance with
+$\mathcal F_\MF$, and it amounts to the MFT with the true $D(\rho)$. The error
+is in the free energy, so the correction belongs in the interaction.
+
+\paragraph{Effective kernel.} Replace $V$ in \eqref{eq:dk} by
+\begin{equation}\label{eq:ueff}
+  U_{\rm eff}(r) = -k_BT\,c(r),
+\end{equation}
+with $c$ the direct correlation function, keeping the mobility $D_0\rho$. The
+Gaussian fluctuations then give the exact Ornstein--Zernike structure factor
+and the exact collective diffusivity,
+\begin{equation}
+  S(k) = \frac{1}{1-\bar\rho\,\hat c(k)}, \qquad
+  D_c = D_0\big(1-\bar\rho\,\hat c(0)\big) = \frac{D_0}{S(0)} = \mu_0\partial_\rho P ,
+\end{equation}
+the standard dynamical-DFT (Ramaswamy--Yussouff) form. The low-density
+closure $c\simeq e^{-\beta V}-1$ gives $\beta\hat U_{\rm eff}(0) = 2B_2$, i.e.
+$D = 1+2B_2\rho$ (1.475 at $\beta\varepsilon=3$, $\rho\ell=0.2$), still 10\%
+below $D_\vir$ because $B_3$ and $B_4$ matter there. Since the grid only
+resolves $k\ell\ll1$ ($\Delta x = 100\ell$), where $\hat c(k)\simeq\hat c(0)$,
+it suffices to match the compressibility: keep the Gaussian shape and choose
+its strength so that $1+\sqrt\pi\,\beta\varepsilon_{\rm eff}\,\rho\ell = D_\vir$,
+\begin{equation}
+  \beta\varepsilon_{\rm eff} = \frac{D_\vir-1}{\sqrt\pi\,\rho\ell}
+   = \frac{0.6428}{\sqrt\pi\times0.2} = 1.813
+   \qquad(\text{bare } \beta\varepsilon = 3).
+\end{equation}
+This is \code{DK/inputs\_fv\_gauss\_1d\_ensemble\_e3r02\_ceff}
+(\code{amr.ip\_eps} $=1.813\,N$), otherwise identical to the bare-kernel DK run.
+
+\paragraph{Results.} Table~\ref{tab:ceff} collects the measured collective
+diffusivity, fitted from the decay of $F(k,\tau)$, and $F(k,0)$, averaged over
+the modes $q=8,12,\dots,28$ ($k\ell\le0.03$). For the grid runs the fit is the
+slope of $\ln F$ divided by $\keff^2$. For the particles, whose mesh density is
+a nearest-grid-point particle count, the $q$ mode contains the aliases
+$k_m = k+2\pi m/\Delta x$ with weights $\mathrm{sinc}^2(k_m\Delta x/2)$, each
+decaying at $Dk_m^2$, and $D$ is fitted to
+$F_p = A\sum_m \mathrm{sinc}^2(k_m\Delta x/2)\,e^{-Dk_m^2\tau}$.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+run & $D$ & $S=F(k,0)$ & $D\,S$ & theory $D$, $S$ \\
+\midrule
+DKE, bare kernel ($\beta\varepsilon=3$)        & $2.065\pm0.006$ & $0.484\pm0.001$ & 0.999 & 2.063, 0.485 \\
+MFT, mean-field $D(\rho)$                      & $2.071\pm0.005$ & $0.484\pm0.001$ & 1.002 & 2.063, 0.485 \\
+DKE, effective kernel ($\beta\varepsilon_{\rm eff}=1.813$) & $1.642\pm0.007$ & $0.606\pm0.002$ & 0.994 & 1.643, 0.609 \\
+MFT, virial $D(\rho)$                          & $1.645\pm0.006$ & $0.607\pm0.001$ & 0.998 & 1.643, 0.609 \\
+particles                                      & $1.63\pm0.05^{\,a}$ & $0.606\pm0.011$ & 0.95$^{\,b}$ & 1.643, 0.609 \\
+\bottomrule
+\end{tabular}
+\caption{Measured collective diffusivity and $S(k\to0)$ at
+$\beta\varepsilon=3$, $\rho\ell=0.2$, 20 particles per cell. Grid runs: mean
+and standard deviation over the six modes. Particles: mean and standard error.
+$^a$ modes $q\ge16$, which the particle run follows over several relaxation
+times; over all modes $1.57\pm0.05$, the low-$q$ fits being limited by a run of
+only 1--3 relaxation times with 77 time origins. $^b$ over all modes.}
+\label{tab:ceff}
+\end{table}
+
+\noindent Four conclusions follow.
+\begin{enumerate}[nosep]
+  \item The effective-kernel DKE agrees with the virial MFT within 0.2\% in
+        both $D$ and $S$, at every mode. The mean-field error of the DKE is
+        therefore entirely thermodynamic, and is removed by \eqref{eq:ueff};
+        $D_0=1$ needs no change.
+  \item The nonlinear and multiplicative-noise terms of the DKE add nothing
+        measurable beyond its linear theory: $D\,S-1$ stays below 1\% for all
+        grid runs, consistent with the $O(1/N_{\rm cell})$ estimate of
+        Sec.~\ref{sec:cg}.
+  \item The particles follow the virial (and effective-kernel) prediction and
+        exclude mean field: $S$ is $11$ standard errors from $1/D_\MF$ and $D$
+        (modes $q\ge16$) $8$ standard errors from $D_\MF$.
+  \item Matching only $\hat c(0)$ suffices for all resolved modes, because
+        $\hat c(k)$ is flat for $k\ell\ll1$.
+\end{enumerate}
+
+\paragraph{Limitations.} $\beta\varepsilon_{\rm eff}$ was fixed from the
+virial equation of state at this density: it is a one-parameter matching of
+the compressibility, not a prediction. Since $c$ depends on $\rho$, the kernel
+must be recomputed at another density, and a single kernel is not exact for an
+inhomogeneous $\rho(x)$; the MFT, whose $D(\rho)$ depends on the local
+density, handles both automatically. Resolving structure at $k\ell\sim1$
+would require the full $\hat c(k)$, not only $\hat c(0)$. Finally, the
+particle statistics ($\pm2$--$3\%$) cannot resolve corrections at the 1\%
+level, such as those of the truncated virial series (the $B_4$ term is 1.7\%
+of $D$).
+
 \section{Summary}
 
 \begin{enumerate}[nosep]
@@ -378,6 +476,11 @@ virial row (MFT) or the mean-field row (DKE).
   \item The gap grows with $\beta\varepsilon$, and is about 22\% in $S$ at
         $\beta\varepsilon=3$, $\rho\ell=0.2$, where the virial $D$ is still
         accurate.
+  \item The fix is in the interaction, not in $D_0$: with the effective
+        kernel $-k_BT\,c(r)$, matched to the compressibility
+        ($\beta\varepsilon_{\rm eff}=1.813$ for $\beta\varepsilon=3$), the DKE
+        reproduces the virial MFT within 0.2\%, and both agree with the
+        particle simulations within their statistics (Table~\ref{tab:ceff}).
 \end{enumerate}
 
 \end{document}
