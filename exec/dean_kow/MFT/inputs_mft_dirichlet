@@ -1,0 +1,62 @@
+# *****************************************************************
+# Boundary-driven MFT SPDE between two reservoirs:
+#   d rho/dt = d/dx[ D(rho) d rho/dx + sqrt(sigma(rho)/Lambda) eta ]
+# on 0 < x < 1 with Dirichlet walls rho(0) = rho_bc_lo, rho(1) = rho_bc_hi,
+# run as 200 independent 1D realizations stacked along y (is_ensemble_dir = 0 1).
+# Example: SSEP, D = 1, sigma = 2 rho (1 - rho). The mean profile is linear,
+# rho(x) = 0.8 - 0.6 x, and the steady current is D (rho_lo - rho_hi)/L = 0.6.
+#
+# Wall faces: the ghost value is 2 rho_wall - rho, so the gradient is
+# (rho - rho_wall)/(dx/2); D and sigma are evaluated at rho_wall; the noise
+# variance is doubled (the wall face is dx/2 from the cell centre).
+#
+# Note: S(k) and the ISF Fourier-transform along x as if it were periodic.
+# With walls the mean profile is not uniform, so they are not the equilibrium
+# quantities here and are switched off below.
+# *****************************************************************
+
+max_step  = 200000
+seed = 0
+amrex.fpe_trap_invalid = 1
+
+# D(rho) and sigma(rho): amrex::Parser expressions in rho
+D_rho     = "1."
+sigma_rho = "2.*rho*(1.-rho)"
+Lambda    = 640000.         # Lambda*dx*dy = 100 lattice sites per cell (dx = 1/32, dy = 1/200)
+dorand    = 1.
+
+rho0 = 0.5                  # initial density (uniform)
+
+# independent realizations along y
+is_ensemble_dir = 0 1
+
+# walls along x (bc = 3, Dirichlet with the densities below), periodic in y
+geometry.prob_lo     = 0.0  0.0
+geometry.prob_hi     = 1.0  1.0
+geometry.is_periodic = 0    1
+bc_lo     = 3   0
+bc_hi     = 3   0
+rho_bc_lo = 0.8 0.          # wall density on the lo side of each direction (bc = 3 only)
+rho_bc_hi = 0.2 0.          # wall density on the hi side of each direction (bc = 3 only)
+
+struct_fact_int = 0
+isf_n_modes     = 0
+
+# spatial correlation C(x*,x) = <delta rho(x*) delta rho(x)>, averaged over time
+# and over the rows (realizations); written to <corr_plot_file>.dat with each
+# plotfile. Columns: x i <rho> C Lambda*dV*C Lambda*dVperp*C nsamples.
+# At x = x*, Lambda*dV*C -> sigma/(2D) (here rho(1-rho)); for x != x*,
+# Lambda*dVperp*C (dVperp = dy) -> the long-range MFT correlation, for the SSEP
+#   C_LR(x*,x) = -(rho_lo - rho_hi)^2 x (1 - x*)  for x < x*  (x* (1 - x) for x > x*)
+corr_x_star    = 0.5        # cell 16 of 32 (centre 0.515625)
+corr_int       = 10         # sample every 10 steps
+corr_n_skip    = 20000      # after the initial transient
+corr_plot_file = spatial_corr
+
+amr.n_cell        = 32  200
+amr.max_grid_size = 32  50
+
+adv.cfl = 0.2               # fraction of the forward Euler limit
+
+amr.plot_file = plt_mft_dir_
+amr.plot_int  = 20000

@@ -29,9 +29,12 @@ void init_rho (int i, int j, int k,
 // rho_fn the average of their non-negative parts, as for the noise amplitude
 // in ../interaction; sigma is also clipped at 0 (e.g. SSEP for rho > 1).
 // stochflux holds N(0, 1/(Lambda dt cellvol)) samples (see advance_rho).
-// A wall (bc = 3) is a zero Dirichlet boundary: the ghost value is
-// 2*rhobdry - rho, the face density is rhobdry and the noise is scaled by
-// sqrt(2), as in ../interaction/mykernel.H.
+// A wall (bc = 3) is a Dirichlet boundary with prescribed density rho_wall
+// (rho_wall_lo/hi, from the inputs rho_bc_lo/hi): the ghost value is
+// 2*rho_wall - rho, so the gradient is (rho - rho_wall)/(dx/2); D and sigma
+// are evaluated at rho_wall; and the noise is scaled by sqrt(2), i.e. its
+// variance is doubled, because the wall face is dx/2 from the cell centre
+// (the boundary cell is halved), as in ../interaction/mykernel.H.
 AMREX_GPU_DEVICE AMREX_FORCE_INLINE
 void compute_flux_x (int i, int j, int k,
                      amrex::Array4<amrex::Real> const& fluxx,
@@ -39,9 +42,9 @@ void compute_flux_x (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& rho, amrex::Real dxinv,
                      amrex::ParserExecutor<1> const& Dfn,
                      amrex::ParserExecutor<1> const& sigfn,
-                     int dom_lo, int dom_hi, int bc_lo, int bc_hi)
+                     int dom_lo, int dom_hi, int bc_lo, int bc_hi,
+                     amrex::Real rho_wall_lo, amrex::Real rho_wall_hi)
 {
-    amrex::Real rhobdry = 0.;
     amrex::Real stofact = 1.;
 
     amrex::Real rhop, rhom, rhof, rhofn;
@@ -49,18 +52,18 @@ void compute_flux_x (int i, int j, int k,
     if (i == dom_lo && bc_lo == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhom = 2.*rhobdry - rho(i,j,k,0);
+        rhom = 2.*rho_wall_lo - rho(i,j,k,0);
         rhop = rho(i,j,k,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_lo;
+        rhofn = rho_wall_lo;
 
     } else if (i == dom_hi+1 && bc_hi == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhop = 2.*rhobdry - rho(i-1,j,k,0);
+        rhop = 2.*rho_wall_hi - rho(i-1,j,k,0);
         rhom = rho(i-1,j,k,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_hi;
+        rhofn = rho_wall_hi;
 
     } else {
 
@@ -82,9 +85,9 @@ void compute_flux_y (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& rho, amrex::Real dyinv,
                      amrex::ParserExecutor<1> const& Dfn,
                      amrex::ParserExecutor<1> const& sigfn,
-                     int dom_lo, int dom_hi, int bc_lo, int bc_hi)
+                     int dom_lo, int dom_hi, int bc_lo, int bc_hi,
+                     amrex::Real rho_wall_lo, amrex::Real rho_wall_hi)
 {
-    amrex::Real rhobdry = 0.;
     amrex::Real stofact = 1.;
 
     amrex::Real rhop, rhom, rhof, rhofn;
@@ -92,18 +95,18 @@ void compute_flux_y (int i, int j, int k,
     if (j == dom_lo && bc_lo == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhom = 2.*rhobdry - rho(i,j,k,0);
+        rhom = 2.*rho_wall_lo - rho(i,j,k,0);
         rhop = rho(i,j,k,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_lo;
+        rhofn = rho_wall_lo;
 
     } else if (j == dom_hi+1 && bc_hi == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhop = 2.*rhobdry - rho(i,j-1,k,0);
+        rhop = 2.*rho_wall_hi - rho(i,j-1,k,0);
         rhom = rho(i,j-1,k,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_hi;
+        rhofn = rho_wall_hi;
 
     } else {
 
@@ -126,9 +129,9 @@ void compute_flux_z (int i, int j, int k,
                      amrex::Array4<amrex::Real const> const& rho, amrex::Real dzinv,
                      amrex::ParserExecutor<1> const& Dfn,
                      amrex::ParserExecutor<1> const& sigfn,
-                     int dom_lo, int dom_hi, int bc_lo, int bc_hi)
+                     int dom_lo, int dom_hi, int bc_lo, int bc_hi,
+                     amrex::Real rho_wall_lo, amrex::Real rho_wall_hi)
 {
-    amrex::Real rhobdry = 0.;
     amrex::Real stofact = 1.;
 
     amrex::Real rhop, rhom, rhof, rhofn;
@@ -136,18 +139,18 @@ void compute_flux_z (int i, int j, int k,
     if (k == dom_lo && bc_lo == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhom = 2.*rhobdry - rho(i,j,k,0);
+        rhom = 2.*rho_wall_lo - rho(i,j,k,0);
         rhop = rho(i,j,k,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_lo;
+        rhofn = rho_wall_lo;
 
     } else if (k == dom_hi+1 && bc_hi == amrex::BCType::ext_dir) {
 
         stofact = std::sqrt(2.);
-        rhop = 2.*rhobdry - rho(i,j,k-1,0);
+        rhop = 2.*rho_wall_hi - rho(i,j,k-1,0);
         rhom = rho(i,j,k-1,0);
-        rhof = rhobdry;
-        rhofn = rhobdry;
+        rhof = rho_wall_hi;
+        rhofn = rho_wall_hi;
 
     } else {
 

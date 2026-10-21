@@ -38,6 +38,12 @@ rho0 = 0.3
 # independent realizations along the directions set to 1 (no transport there)
 #is_ensemble_dir = 0 1
 
+# spatial correlation <delta rho(x*) delta rho(x)> along x (see inputs_mft_dirichlet)
+#corr_x_star    = 0.5
+#corr_int       = 10
+#corr_n_skip    = 5000
+#corr_plot_file = spatial_corr
+
 # *****************************************************************
 # Structure factor S(k) = Lambda |drho_hat|^2 / (rhobar V), sampled every
 # struct_fact_int steps after n_steps_skip and written with each plotfile
@@ -52,9 +58,12 @@ n_steps_skip    = 5000
 geometry.prob_lo     =  0.0  0.0  0.0
 geometry.prob_hi     =  1.0  1.0  1.0
 geometry.is_periodic =  1    1    1
-# 0 = periodic (needs geometry.is_periodic = 1), 3 = wall with rho = 0
+# 0 = periodic (needs geometry.is_periodic = 1), 3 = Dirichlet wall with the
+# density rho_bc_lo/hi of that side (default 0); see inputs_mft_dirichlet
 #bc_lo = 3 3
 #bc_hi = 3 3
+#rho_bc_lo = 0.8 0.
+#rho_bc_hi = 0.2 0.
 
 # *****************************************************************
 # Resolution

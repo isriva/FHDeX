@@ -21,6 +21,8 @@ void advance_rho (MultiFab& rho_old,
                   ParserExecutor<1> const& sigfn,
                   Geometry const& geom,
                   BCRec const& bc,
+                  GpuArray<Real,AMREX_SPACEDIM> const& rho_bc_lo,
+                  GpuArray<Real,AMREX_SPACEDIM> const& rho_bc_hi,
                   GpuArray<int,AMREX_SPACEDIM> const& ens_dir)
 {
     AMREX_D_TERM(const Real dxinv = geom.InvCellSize(0);,
@@ -82,7 +84,8 @@ void advance_rho (MultiFab& rho_old,
                 [=] AMREX_GPU_DEVICE (int i, int j, int k)
                 {
                     compute_flux_x(i,j,k,fluxx,stochfluxx,rho,dxinv,Dfn,sigfn,
-                                   dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0));
+                                   dom_lo.x, dom_hi.x, bc.lo(0), bc.hi(0),
+                                   rho_bc_lo[0], rho_bc_hi[0]);
                 });
         }
 
@@ -93,7 +96,8 @@ void advance_rho (MultiFab& rho_old,
                 [=] AMREX_GPU_DEVICE (int i, int j, int k)
                 {
                     compute_flux_y(i,j,k,fluxy,stochfluxy,rho,dyinv,Dfn,sigfn,
-                                   dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1));
+                                   dom_lo.y, dom_hi.y, bc.lo(1), bc.hi(1),
+                                   rho_bc_lo[1], rho_bc_hi[1]);
                 });
         }
 #if (AMREX_SPACEDIM > 2)
@@ -104,7 +108,8 @@ void advance_rho (MultiFab& rho_old,
                 [=] AMREX_GPU_DEVICE (int i, int j, int k)
                 {
                     compute_flux_z(i,j,k,fluxz,stochfluxz,rho,dzinv,Dfn,sigfn,
-                                   dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2));
+                                   dom_lo.z, dom_hi.z, bc.lo(2), bc.hi(2),
+                                   rho_bc_lo[2], rho_bc_hi[2]);
                 });
         }
 #endif
@@ -136,6 +141,9 @@ void advance_rho (MultiFab& rho_old,
 Real est_time_step (MultiFab const& rho, Real cfl,
                     ParserExecutor<1> const& Dfn,
                     Geometry const& geom,
+                    BCRec const& bc,
+                    GpuArray<Real,AMREX_SPACEDIM> const& rho_bc_lo,
+                    GpuArray<Real,AMREX_SPACEDIM> const& rho_bc_hi,
                     GpuArray<int,AMREX_SPACEDIM> const& ens_dir)
 {
     const Real* dx = geom.CellSize();
@@ -143,8 +151,8 @@ Real est_time_step (MultiFab const& rho, Real cfl,
     // Forward Euler is stable when dt * lambda_max <= 2, with
     //   lambda_max <= max D(rho) * keff2_max,  keff2_max = sum_d 4/dx_d^2
     // (ensemble directions carry no flux, so they do not limit dt).
-    // max D is taken over the cell values; with a wall the face value D(0)
-    // is included as well. cfl is the fraction of this limit that is used.
+    // max D is taken over the cell values and, on wall faces, over D(rho_wall)
+    // of each wall. cfl is the fraction of this limit that is used.
     Real keff2_max = 0.;
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         if (!ens_dir[d]) { keff2_max += 4./(dx[d]*dx[d]); }
@@ -153,19 +161,35 @@ Real est_time_step (MultiFab const& rho, Real cfl,
     ReduceOps<ReduceOpMax> reduce_op;
     ReduceData<Real> reduce_data(reduce_op);
     using ReduceTuple = typename decltype(reduce_data)::Type;
-    const bool has_wall = !geom.isAllPeriodic();
     for (MFIter mfi(rho); mfi.isValid(); ++mfi) {
         auto const& r = rho.const_array(mfi);
         reduce_op.eval(mfi.validbox(), reduce_data,
             [=] AMREX_GPU_DEVICE (int i, int j, int k) -> ReduceTuple
             {
-                Real D = Dfn(r(i,j,k,0));
-                if (has_wall) { D = amrex::max(D, Dfn(Real(0.))); }
-                return { D };
+                return { Dfn(r(i,j,k,0)) };
             });
     }
     Real Dmax = amrex::get<0>(reduce_data.value());
     ParallelDescriptor::ReduceRealMax(Dmax);
+
+    // D at the wall densities (the executor is device-callable, so evaluate
+    // it in a device reduction)
+    {
+        GpuArray<Real,2*AMREX_SPACEDIM> rw;
+        GpuArray<int,2*AMREX_SPACEDIM> is_wall;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            rw[2*d] = rho_bc_lo[d];  is_wall[2*d]   = (bc.lo(d) == BCType::ext_dir && !ens_dir[d]);
+            rw[2*d+1] = rho_bc_hi[d]; is_wall[2*d+1] = (bc.hi(d) == BCType::ext_dir && !ens_dir[d]);
+        }
+        ReduceOps<ReduceOpMax> wop;
+        ReduceData<Real> wdata(wop);
+        wop.eval(2*AMREX_SPACEDIM, wdata,
+            [=] AMREX_GPU_DEVICE (int n) -> ReduceTuple
+            {
+                return { is_wall[n] ? Dfn(rw[n]) : std::numeric_limits<Real>::lowest() };
+            });
+        Dmax = amrex::max(Dmax, amrex::get<0>(wdata.value()));
+    }
 
     const Real lambda_max = Dmax * keff2_max;
 

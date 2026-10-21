@@ -253,6 +253,33 @@ for the 1D WCA ensemble in equilibrium.
 - F(k,τ)/F(k,0) follows exp(−D k_eff² τ), with k_eff = (2/Δx) sin(kΔx/2), to
   within the statistical noise.
 
+## Spatial density correlation (in-code)
+
+`SpatialCorrelation.{H,cpp}` (shared with `../MFT`) accumulates the equal-time
+correlation along x between a fixed point x* and every x,
+
+C(x*, x) = ⟨δρ(x*) δρ(x)⟩ = ⟨ρ(x*)ρ(x)⟩ − ⟨ρ(x*)⟩⟨ρ(x)⟩,
+
+averaged over time and over the rows of cells along the other directions (one
+independent realization per row when those are ensemble directions). The
+field is phi on level 0 (the SPDE solution, or the averaged-down particle
+density with particles), converted to particles per unit length of a row,
+ρ = num_part·φ·ΔV⊥, with ΔV⊥ the cell cross-section normal to x.
+
+| Input | Default | Meaning |
+|---|---|---|
+| `corr_x_star` | – | x* (physical position); the cell is floor((x* − prob_lo)/dx) |
+| `corr_int` | 0 (off) | Sample every this many steps |
+| `corr_n_skip` | 0 | Steps skipped before the first sample |
+| `corr_plot_file` | `spatial_corr` | Output `<corr_plot_file>.dat`, rewritten with each plotfile and at the end |
+
+Columns: `x  i  <rho>  C  Lambda*dV*C  Lambda*dVperp*C  nsamples`, with
+Λ = 1/ΔV⊥ (the convention of `../MFT`). On site, Λ·ΔV·C → σ/(2D) (ρ for
+non-interacting particles); off site, Λ·ΔV⊥·C → the long-range MFT
+correlation C_LR(x*, x). x must not be an ensemble direction. Note that the
+walls here (bc = 3) have zero density, unlike the prescribed wall densities of
+`../MFT`.
+
 ## Postprocessing
 
 `python/stack_plotfiles_time.py` stacks a series of 2D plotfiles into a 3D

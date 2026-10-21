@@ -1,8 +1,10 @@
 CEXE_sources += main.cpp
 CEXE_sources += myfunc.cpp
 CEXE_sources += IntermediateScatteringFunction.cpp
+CEXE_sources += SpatialCorrelation.cpp
 
 CEXE_headers += myfunc.H
 CEXE_headers += mykernel.H
 CEXE_headers += InitProfile.H
 CEXE_headers += IntermediateScatteringFunction.H
+CEXE_headers += SpatialCorrelation.H

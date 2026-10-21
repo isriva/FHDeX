@@ -118,11 +118,21 @@ $\Lambda=N$ this is the noise of \code{interaction}, whose variance
 $2D/(N\,\Delta t\,\Delta V)$ multiplies $\phi$.
 
 \paragraph{Walls.}
-Boundaries are periodic (\code{bc = 0}) or zero-density Dirichlet walls
-(\code{bc = 3}), treated as in \code{interaction}. On a wall face, the ghost
-density is $2\rho_b-\rho$ with $\rho_b=0$; both face densities are set to
-$\rho_b$; and the noise is multiplied by $\sqrt2$ (half-cell distance to the
-wall).
+Boundaries are periodic (\code{bc = 0}) or Dirichlet walls (\code{bc = 3})
+with a prescribed density $\rho_b$ on each side (\code{rho\_bc\_lo},
+\code{rho\_bc\_hi}, one value per direction, default 0), treated as in
+\code{interaction}. The wall face lies half a cell from the centre of the
+boundary cell, so that cell is in effect halved. On a wall face the ghost
+density is $2\rho_b-\rho$, i.e.\ the gradient is $(\rho-\rho_b)/(\Delta x/2)$;
+$D$ and $\sigma$ are evaluated at $\rho_b$; and the noise is multiplied by
+$\sqrt2$, i.e.\ its variance is doubled, consistent with the half-cell
+distance. For the low wall of direction $x$,
+\begin{equation}
+  F_{1/2} = D(\rho_b)\,\frac{\rho_0-\rho_b}{\Delta x/2}
+          + \sqrt{2}\,\sqrt{\max(\sigma(\rho_b),0)}\;W_{1/2},
+\end{equation}
+and likewise at the high wall. The time step uses $D(\rho_b)$ of the walls in
+$D_{\max}$.
 
 \paragraph{Time stepping.}
 Euler--Maruyama,
@@ -145,8 +155,8 @@ Unless \code{adv.fixed\_dt} is given,
   \Delta t = \mathrm{cfl}\,\frac{2}{D_{\max}\,\sum_{d\notin\mathrm{ens}} 4/\Delta x_d^2},
 \end{equation}
 the forward-Euler limit of the diffusion operator times \code{adv.cfl}.
-Here $D_{\max}$ is the maximum of $D$ over the cell values (and $D(0)$ if
-there is a wall). $\Delta t$ grows by at most a factor $1.1$ per step.
+Here $D_{\max}$ is the maximum of $D$ over the cell values and the wall
+densities. $\Delta t$ grows by at most a factor $1.1$ per step.
 
 \section{Algorithm}
 
@@ -175,6 +185,24 @@ $\bar\rho$ the mean initial density; the ISF uses the same factor, so
 $F(k,0)=S(k)$. The ISF class is that of \code{interaction}: rolling windows
 of x modes, either per x pencil (\code{isf\_do\_1D = 1}, one realization per
 pencil) or from the $k_y=k_z=0$ modes of the full FFT.
+
+\paragraph{Spatial correlation.} With \code{corr\_x\_star} and
+\code{corr\_int} set, every \code{corr\_int} steps after \code{corr\_n\_skip}
+the code samples, for every row of cells along the non-$x$ directions (one
+realization each when those are ensemble directions), $\rho(x^*)$,
+$\rho(x)$ and $\rho(x^*)\rho(x)$, and accumulates their sums over time and
+rows. It writes
+\begin{equation}
+  C(x^*,x) = \langle\rho(x^*)\rho(x)\rangle - \langle\rho(x^*)\rangle\langle\rho(x)\rangle
+\end{equation}
+to \code{<corr\_plot\_file>.dat} with each plotfile, together with
+$\langle\rho(x)\rangle$, $\Lambda\Delta V\,C$ and $\Lambda\Delta V_\perp C$, where
+$\Delta V_\perp$ is the cell cross-section of a row. In MFT,
+$\langle\delta\rho(x)\delta\rho(y)\rangle = \Lambda_1^{-1}\big[\tfrac{\sigma}{2D}\delta(x-y)
++ C_{\rm LR}(x,y)\big]$ with $\Lambda_1=\Lambda\Delta V_\perp$ per realization,
+so $\Lambda\Delta V\,C\to\sigma/(2D)$ at $x=x^*$ and $\Lambda\Delta V_\perp C\to
+C_{\rm LR}(x^*,x)$ for $x\neq x^*$. For the SSEP between reservoirs $\rho_a$,
+$\rho_b$ ($L=1$), $C_{\rm LR}(x,y) = -(\rho_a-\rho_b)^2\,x(1-y)$ for $x\le y$.
 
 \section{Discrete equilibrium}
 

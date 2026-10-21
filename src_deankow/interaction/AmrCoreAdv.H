@@ -16,6 +16,7 @@
 #include "InitProfile.H"
 #include "StructFact.H"
 #include "IntermediateScatteringFunction.H"
+#include "SpatialCorrelation.H"
 
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
@@ -240,6 +241,11 @@ private:
 
     // intermediate scattering function of phi on level 0 (isf_* inputs)
     std::unique_ptr<IntermediateScatteringFunction> isf;
+
+    // spatial correlation <delta rho(x*) delta rho(x)> of the level-0 density
+    // along x (corr_* inputs), in particles per unit length of a row
+    SpatialCorrelation corr;
+    void InitSpatialCorrelation ();
 
     void PrintNegativeDensityDiagnostics (int step) const;
 

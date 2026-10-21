@@ -18,6 +18,7 @@
 #include "InitProfile.H"
 #include "StructFact.H"
 #include "IntermediateScatteringFunction.H"
+#include "SpatialCorrelation.H"
 #include "chrono"
 
 using namespace amrex;
@@ -79,6 +80,10 @@ void main_main ()
     Vector<int> bc_lo(AMREX_SPACEDIM,0);
     Vector<int> bc_hi(AMREX_SPACEDIM,0);
 
+    // densities prescribed on the lo/hi walls (bc = 3) of each direction
+    Vector<Real> rho_bc_lo_in(AMREX_SPACEDIM,0.);
+    Vector<Real> rho_bc_hi_in(AMREX_SPACEDIM,0.);
+
     // ensemble directions: no transport along them, so each row of cells
     // along them is an independent realization
     GpuArray<int,AMREX_SPACEDIM> ens_dir;
@@ -90,6 +95,9 @@ void main_main ()
 
     // intermediate scattering function of rho (isf_* inputs)
     IntermediateScatteringFunction isf;
+
+    // spatial correlation <delta rho(x*) delta rho(x)> (corr_* inputs)
+    SpatialCorrelation corr;
 
     Vector<int> n_cell(AMREX_SPACEDIM);
     Vector<int> max_grid_size(AMREX_SPACEDIM,32);
@@ -124,10 +132,13 @@ void main_main ()
         pp.query("struct_fact_int", struct_fact_int);
         pp.query("n_steps_skip", n_steps_skip);
         isf.ReadParameters(pp);
+        corr.ReadParameters(pp);
 
         // read in BC; see Src/Base/AMReX_BC_TYPES.H for supported types
         pp.queryarr("bc_lo", bc_lo);
         pp.queryarr("bc_hi", bc_hi);
+        pp.queryarr("rho_bc_lo", rho_bc_lo_in, 0, AMREX_SPACEDIM);
+        pp.queryarr("rho_bc_hi", rho_bc_hi_in, 0, AMREX_SPACEDIM);
 
         Vector<int> ens(AMREX_SPACEDIM, 0);
         pp.queryarr("is_ensemble_dir", ens, 0, AMREX_SPACEDIM);
@@ -196,15 +207,30 @@ void main_main ()
         geom.define(domain);
     }
 
-    // periodic (bc = 0) or a wall with rho = 0 (bc = 3), as in ../interaction
+    // periodic (bc = 0) or a Dirichlet wall (bc = 3) with the density
+    // rho_bc_lo/hi of that side (default 0), as in ../interaction
     BCRec bc;
+    GpuArray<Real,AMREX_SPACEDIM> rho_bc_lo, rho_bc_hi;
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim)
     {
         if (bc_lo[idim] != BCType::int_dir && bc_lo[idim] != BCType::ext_dir) {
-            amrex::Abort("Invalid bc_lo: use 0 (periodic) or 3 (zero-value Dirichlet wall)");
+            amrex::Abort("Invalid bc_lo: use 0 (periodic) or 3 (Dirichlet wall with density rho_bc_lo)");
         }
         if (bc_hi[idim] != BCType::int_dir && bc_hi[idim] != BCType::ext_dir) {
-            amrex::Abort("Invalid bc_hi: use 0 (periodic) or 3 (zero-value Dirichlet wall)");
+            amrex::Abort("Invalid bc_hi: use 0 (periodic) or 3 (Dirichlet wall with density rho_bc_hi)");
+        }
+        if (rho_bc_lo_in[idim] < 0. || rho_bc_hi_in[idim] < 0.) {
+            amrex::Abort("rho_bc_lo/rho_bc_hi must be non-negative");
+        }
+        rho_bc_lo[idim] = rho_bc_lo_in[idim];
+        rho_bc_hi[idim] = rho_bc_hi_in[idim];
+        if (bc_lo[idim] == BCType::ext_dir) {
+            amrex::Print() << "Dirichlet wall at the lo side of direction " << idim
+                           << ", rho = " << rho_bc_lo[idim] << "\n";
+        }
+        if (bc_hi[idim] == BCType::ext_dir) {
+            amrex::Print() << "Dirichlet wall at the hi side of direction " << idim
+                           << ", rho = " << rho_bc_hi[idim] << "\n";
         }
         const bool per = (bc_lo[idim] == BCType::int_dir && bc_hi[idim] == BCType::int_dir);
         if (per != geom.isPeriodic(idim)) {
@@ -306,6 +332,7 @@ void main_main ()
                        << " steps after step " << n_steps_skip << "\n";
     }
     if (isf.Enabled()) { isf.Init(geom, ba, dm, sf_var_scaling); }
+    if (corr.Enabled()) { corr.Init(geom, Lambda, ens_dir); }
 
     auto WritePlotFile = [&] (int step, Real time)
     {
@@ -345,13 +372,14 @@ void main_main ()
         // compute dt from the stability limit, change by at most a factor
         // 1.1 per step; a fixed dt overrides it
         constexpr Real change_max = 1.1;
-        Real dt_new = amrex::min(est_time_step(rho_old, cfl, Dfn, geom, ens_dir), change_max*dt);
+        Real dt_new = amrex::min(est_time_step(rho_old, cfl, Dfn, geom, bc,
+                                               rho_bc_lo, rho_bc_hi, ens_dir), change_max*dt);
         if (fixed_dt > 0.) { dt_new = fixed_dt; }
         if (cur_time + dt_new > stop_time - 1.e-3*dt_new) { dt_new = stop_time - cur_time; }
         dt = dt_new;
 
         advance_rho(rho_old, rho_new, flux, stochFlux, dt, Lambda, dorand,
-                    Dfn, sigfn, geom, bc, ens_dir);
+                    Dfn, sigfn, geom, bc, rho_bc_lo, rho_bc_hi, ens_dir);
 
         cur_time += dt;
         istep = step+1;
@@ -374,12 +402,14 @@ void main_main ()
             ++sf_nsamples;
         }
         isf.Sample(step+1, cur_time, rho_new);
+        corr.Sample(step+1, rho_new);
 
         if (plot_int > 0 && (step+1) % plot_int == 0) {
             last_plot_file_step = step+1;
             WritePlotFile(step+1, cur_time);
             WriteStructFact(step+1, cur_time);
             isf.Write();
+            corr.Write();
         }
 
         if (cur_time >= stop_time - 1.e-6*dt) { break; }
@@ -390,4 +420,5 @@ void main_main ()
     }
     WriteStructFact(istep, cur_time);
     isf.Write();
+    corr.Write();
 }

@@ -176,6 +176,7 @@ AmrCoreAdv::Evolve ()
             StructFactSample();
         }
         isf->Sample(step+1, cur_time, phi_new[0]);
+        corr.Sample(step+1, phi_new[0]);
 
         // sync up time
         for (lev = 0; lev <= finest_level; ++lev) {
@@ -187,6 +188,7 @@ AmrCoreAdv::Evolve ()
             WritePlotFile();
             WriteStructFact();
             isf->Write();
+            corr.Write();
         }
 
         if (chk_int > 0 && (step+1) % chk_int == 0) {
@@ -209,6 +211,7 @@ AmrCoreAdv::Evolve ()
     }
     WriteStructFact();
     isf->Write();
+    corr.Write();
 }
 
 // initializes multilevel data
@@ -257,6 +260,7 @@ AmrCoreAdv::InitData ()
 
     if (struct_fact_int > 0) { InitStructFact(); }
     if (isf->Enabled()) { isf->Init(Geom(0), grids[0], dmap[0], SFVarScaling()); }
+    if (corr.Enabled()) { InitSpatialCorrelation(); }
     if (plot_int > 0) {
         WritePlotFile();
     }
@@ -279,6 +283,22 @@ AmrCoreAdv::CheckParticlesOnly () const
     if (!grids[1].contains(Geom(1).Domain())) {
         amrex::Abort("adv.particles_only = 1 needs level 1 to cover the whole domain");
     }
+}
+
+// The sampled field is phi on level 0 (the SPDE solution, or the averaged-down
+// particle density) converted to particles per unit length of a row,
+// rho = num_part*phi*dVperp with dVperp the cell cross-section normal to x.
+// With Lambda = 1/dVperp the output columns follow the MFT convention of
+// ../MFT: Lambda*dV*C -> sigma/(2D) on site and Lambda*dVperp*C -> C_LR.
+void
+AmrCoreAdv::InitSpatialCorrelation ()
+{
+    const auto dx = Geom(0).CellSizeArray();
+    Real dvperp = 1.;
+    for (int d = 1; d < AMREX_SPACEDIM; ++d) { dvperp *= dx[d]; }
+    GpuArray<int,AMREX_SPACEDIM> ens;
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) { ens[d] = pot.ens_dir[d]; }
+    corr.Init(Geom(0), 1./dvperp, ens, num_part*dvperp);
 }
 
 void
@@ -1471,6 +1491,7 @@ AmrCoreAdv::ReadParameters ( amrex::Vector<int>& bc_lo, amrex::Vector<int>& bc_h
         pp.query("n_steps_skip", n_steps_skip);
         isf = std::make_unique<IntermediateScatteringFunction>();
         isf->ReadParameters(pp);
+        corr.ReadParameters(pp);
         if (drift_cfl < 0.) {
             Abort("drift_cfl must be >= 0 (0 = off)");
         }
