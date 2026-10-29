@@ -116,8 +116,7 @@ void WritePlotFile(int step,
     varNames[cnt++] = "rhoEInstant";
     x = "rhoYkInstant_";
     for (i=0; i<nspecies; i++) {
-        varNames[cnt] = x;
-        varNames[cnt++] += 48+i;
+        varNames[cnt++] = x + std::to_string(i);
     }
 
     varNames[cnt++] = "rhoInstant";
@@ -128,13 +127,11 @@ void WritePlotFile(int step,
     varNames[cnt++] = "pInstant";
     x = "YkInstant_";
     for (i=0; i<nspecies; i++) {
-        varNames[cnt] = x;
-        varNames[cnt++] += 48+i;
+        varNames[cnt++] = x + std::to_string(i);
     }
     x = "XkInstant_";
     for (i=0; i<nspecies; i++) {
-        varNames[cnt] = x;
-        varNames[cnt++] += 48+i;
+        varNames[cnt++] = x + std::to_string(i);
     }
 
     if (plot_means == 1) {
@@ -181,11 +178,11 @@ void WritePlotFile(int step,
 
     // write a plotfile
     // timer
-    Real t1 = ParallelDescriptor::second();
+    double t1 = ParallelDescriptor::second();
 
     WriteSingleLevelPlotfile(plotfilename,plotfile,varNames,geom,time,step);
 
-    Real t2 = ParallelDescriptor::second() - t1;
+    double t2 = ParallelDescriptor::second() - t1;
     ParallelDescriptor::ReduceRealMax(t2);
     amrex::Print() << "Time spent writing plotfile " << t2 << std::endl;
 

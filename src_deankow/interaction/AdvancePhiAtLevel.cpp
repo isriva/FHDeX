@@ -27,7 +27,9 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
 
 //  compute convolution of U with phi to define interaction
 
-        r2c_forward->forward(U, Uhat);
+    if (pot.use_int_pot) {
+
+        // Uhat is fixed; InitFFTLevel0 computes it at startup and on restart
         r2c_forward->forward(phi_old[lev], Phihat);
 
        // Spectral multiply: Chat = Uhat * Phihat
@@ -128,6 +130,16 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
           const Real scaling = mesh_scale / geom[lev].Domain().d_numPts();
           C.mult(scaling, 0, 1);
 
+          // local repulsion: a repulsive core narrower than a cell, of integral
+          // ip_local_rep, adds ip_local_rep*phi to C (ip_local_rep to Uhat*cellvol)
+          if (pot.ip_local_rep > 0.) {
+              MultiFab::Saxpy(C, pot.ip_local_rep, phi_old[lev], 0, 0, 1, 0);
+          }
+
+    } else {
+        C.setVal(0.);
+    }
+
 /*
 
         for (MFIter mfi(hack); mfi.isValid(); ++mfi) {
@@ -143,12 +155,16 @@ AmrCoreAdv::AdvancePhiAtLevel (int lev, Real /*time*/, Real dt_lev, int /*iterat
 
     C.FillBoundary(Geom(lev).periodicity());
 
+    // face drift velocity of this step, for the time step and the diagnostics
+    if (NeedDriftMeasurement()) { MeasureDrift(lev); }
+
     phi_old[lev].FillBoundary(Geom(lev).periodicity());
 
     // We do this here so we can print the FABs for debugging
     phi_new[lev].setVal(0.0);
 
-    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs);
+    advance_phi(phi_old[lev], phi_new[lev], fluxes, stochFluxes, C, dt_lev, num_part,  diff_coeff, dorand,  geom[lev], bcs, pot,
+                noise_avg_type, drift_flux_type);
 
     // Increment or decrement the flux registers by area and time-weighted fluxes
     // Note that the fluxes have already been scaled by dt and area

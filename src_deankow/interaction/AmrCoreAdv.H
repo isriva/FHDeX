@@ -12,6 +12,9 @@
 #include <AMReX_FillPatcher.H>
 #include <AMReX_FFT.H>
 
+#include "Potentials.H"
+#include "StructFact.H"
+
 #ifdef AMREX_USE_OMP
 #   include <omp.h>
 #endif
@@ -114,6 +117,12 @@ private:
     // initialize FFT state for level 0 (used on first init and restart)
     void InitFFTLevel0 ();
 
+    // print min/max of Re(Uhat) over all k and the k where each occurs
+    void PrintUhatMinMax ();
+
+    // compute int_stiff from Uhat
+    void ComputeInteractionStiffness ();
+
     // Pack pointers to phi_old and/or phi_new and associated times.
     void GetData (int lev, amrex::Real time, amrex::Vector<amrex::MultiFab*>& data,
                   amrex::Vector<amrex::Real>& datatime);
@@ -170,6 +179,14 @@ private:
     amrex::MultiFab U;
     amrex::MultiFab C;
 
+    // interaction (ip_) and external (ep_) potential parameters
+    PotentialParams pot;
+
+    // max over k of keff^2 * max(Uhat(k)*cellvol, 0): the interaction's
+    // contribution (per unit phi) to the largest eigenvalue of the explicit
+    // operator; used by EstTimeStep. Set in InitFFTLevel0.
+    amrex::Real int_stiff = 0.;
+
     // FFT setup (cache these in real code)
     std::unique_ptr<amrex::FFT::R2C<amrex::Real, amrex::FFT::Direction::forward>> r2c_forward;
     std::unique_ptr<amrex::FFT::R2C<amrex::Real, amrex::FFT::Direction::backward>> r2c_backward;
@@ -187,11 +204,57 @@ private:
 
     amrex::Real dorand = 1.;
 
-    amrex::Real num_part;
+    amrex::Real num_part = -1.; // particle count the density is scaled with; must be set in the inputs
 
     amrex::Real diff_coeff;
 
     int alg_type;
+
+    // face noise amplitude: 0 = average of square roots,
+    // 1 = arithmetic average with a C0-smoothed Heaviside of the particle count
+    int noise_avg_type = 0;
+
+    // drift (potential) flux: 0 = centered, 1 = Scharfetter-Gummel,
+    // 2 = hybrid (centered where the face cell Peclet number <= 2, else SG)
+    int drift_flux_type = 0;
+
+    // bound on |grad C| per unit mass, for the Scharfetter-Gummel time step limit
+    amrex::Real drift_wmax = 0.;
+
+    // print negative-density diagnostics every neg_diag_int steps (0 = off)
+    int neg_diag_int = 0;
+
+    // structure factor of phi on level 0, accumulated every struct_fact_int
+    // steps after n_steps_skip (0 = off) and written with each plotfile
+    int struct_fact_int = 0;
+    int n_steps_skip = 0;
+    int sf_nsamples = 0;
+    int sf_last_write_step = -1;
+    StructFact structFact;
+    void InitStructFact ();
+    void StructFactSample ();
+    void WriteStructFact ();
+
+    void PrintNegativeDensityDiagnostics (int step) const;
+
+    // print the drift CFL number and cell Peclet number every drift_diag_int
+    // steps (0 = off)
+    int drift_diag_int = 0;
+
+    // if > 0, limit dt so that dt * sum_d max|w_d|/dx_d <= drift_cfl, with w the
+    // drift velocity grad(C + V_ext) measured at the faces in the previous step
+    amrex::Real drift_cfl = 0.;
+
+    // max over faces of |w_d| from the last step, and whether it has been measured
+    amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> drift_face_max {};
+    bool drift_measured = false;
+
+    bool NeedDriftMeasurement () const {
+        return (pot.use_int_pot || pot.use_ext_pot)
+            && (drift_diag_int > 0 || drift_cfl > 0. || drift_flux_type != 0);
+    }
+    void MeasureDrift (int lev);
+    void PrintDriftDiagnostics (int step) const;
 
     int seed=0;
 
@@ -207,7 +270,8 @@ private:
     // if >= 0 we restart from a checkpoint
     std::string restart_chkfile;
 
-    // advective cfl number - dt = cfl*dx/umax
+    // fraction of the explicit (forward Euler) stability limit used for dt;
+    // see EstTimeStep
     amrex::Real cfl = 0.7;
 
     // how often each level regrids the higher levels of refinement

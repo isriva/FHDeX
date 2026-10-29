@@ -5,86 +5,76 @@
 int greatest_common_factor(int,int);
 void factor(int,int*,int);
 
+namespace {
+
+// number of cells in the planes transverse to dir
+Long NumCellsTransverse (int dir)
+{
+    Long n = 1;
+    for (int d=0; d<AMREX_SPACEDIM; ++d) {
+        if (d != dir) { n *= n_cells[d]; }
+    }
+    return n;
+}
+
+// Sum components incomp..incomp+ncomp-1 of mf_in over the planes transverse to dir.
+// Returns a host vector of size n_cells[dir]*ncomp indexed [r*ncomp + n], reduced
+// over all MPI ranks. Runs on the device when built for GPU.
+// Each bin receives Ny*Nz (or similar) values, so the sums are accumulated in double:
+// float atomics lose up to eps*n relative accuracy and are order-dependent.
+Vector<double> SumOverPlanes (const MultiFab& mf_in, int dir, int incomp, int ncomp)
+{
+    const int npts = n_cells[dir];
+
+    Gpu::DeviceVector<double> d_sum(npts*ncomp, 0.0);
+    double* psum = d_sum.data();
+
+    for (MFIter mfi(mf_in, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.tilebox();
+        auto const& mf = mf_in.const_array(mfi);
+        amrex::ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
+        {
+            int r = (dir == 0) ? i : ((dir == 1) ? j : k);
+            Gpu::Atomic::AddNoRet(&psum[r*ncomp + n], static_cast<double>(mf(i,j,k,incomp+n)));
+        });
+    }
+    Gpu::streamSynchronize();
+
+    Vector<double> h_sum(npts*ncomp);
+    Gpu::copy(Gpu::deviceToHost, d_sum.begin(), d_sum.end(), h_sum.begin());
+
+    // sum over all processors
+    ParallelDescriptor::ReduceRealSum(h_sum.dataPtr(), npts*ncomp);
+
+    return h_sum;
+}
+
+}
+
 void WriteHorizontalAverage(const MultiFab& mf_in, const int& dir, const int& incomp,
                             const int& ncomp, const int& step, const Geometry& geom,
                             const std::string& file_prefix)
 {
     // number of points in the averaging direction
-    int npts = n_cells[dir];
+    const int npts = n_cells[dir];
 
-    // we use ncomp+1 because th first column is the coorinate
-    Vector<Real> average(npts*(ncomp+1),0.);
+    const Real h = geom.CellSize(dir);
 
-    Real h = geom.CellSize(dir);
+    Vector<double> sum = SumOverPlanes(mf_in, dir, incomp, ncomp);
 
-    // dummy variables
-    int r=0;
-    int comp;
-
-    // no tiling or GPU to easily avoid race conditions
-    for (MFIter mfi(mf_in, false); mfi.isValid(); ++mfi) {
-
-        // valid box and the lo/hi coordinates; no ghost cells needed
-        const Box& bx = mfi.validbox();
-        const auto lo = amrex::lbound(bx);
-        const auto hi = amrex::ubound(bx);
-
-        const Array4<const Real> mf = mf_in.array(mfi);
-
-        for (auto n=0; n<ncomp; ++n) {
-            comp = incomp+n;
-            for (auto k = lo.z; k <= hi.z; ++k) {
-                for (auto j = lo.y; j <= hi.y; ++j) {
-                    for (auto i = lo.x; i <= hi.x; ++i) {
-                        if (dir == 0) {
-                            r=i;
-                        } else if (dir == 1) {
-                            r=j;
-                        } else if (dir == 2) {
-                            r=k;
-                        }
-                        // sum up the data
-                        // the "+1" is because the first column will store the physical coordinate
-                        average[ r*(ncomp+1) + n + 1 ] += mf(i,j,k,comp);
-                    }
-                }
-            }
-        }
-
-    } // end MFiter
-
-    // sum over all processors
-    ParallelDescriptor::ReduceRealSum(average.dataPtr(),npts*(ncomp+1));
-
-    // divide by the number of cells
-    int navg=0;
-    if (dir == 0) {
-        navg = n_cells[1]*n_cells[2];
-    } else if (dir == 1) {
-        navg = n_cells[0]*n_cells[2];
-    } else if (dir == 2) {
-        navg = n_cells[0]*n_cells[1];
-    }
-    for (r=0; r<npts; ++r) {
-        for (auto n=1; n<ncomp+1; ++n) {
-            average[r*(ncomp+1) + n] /= navg;
-        }
-    }
-
-    // compute physical coordinate and store in first column
-    for (r=0; r<npts; ++r) {
-        average[r*(ncomp+1)] = prob_lo[dir] + (r+Real(0.5))*h;
-    }
+    // divide by the number of cells in each transverse plane
+    const double navg_inv = 1.0 / static_cast<double>(NumCellsTransverse(dir));
 
     if (ParallelDescriptor::IOProcessor()) {
         std::string filename = amrex::Concatenate(file_prefix,step,9);
         std::ofstream outfile;
         outfile.open(filename);
 
-        // write out result
-        for (r=0; r<npts; ++r) {
-            for (auto n=0; n<ncomp+1; ++n) {
-                outfile << average[r*(ncomp+1) + n] << " ";
+        // write out result; the first column is the physical coordinate
+        for (int r=0; r<npts; ++r) {
+            outfile << prob_lo[dir] + (r+Real(0.5))*h << " ";
+            for (int n=0; n<ncomp; ++n) {
+                outfile << Real(sum[r*ncomp + n]*navg_inv) << " ";
             }
             outfile << std::endl;
         }
@@ -102,93 +92,30 @@ void WriteHorizontalAverageToMF(const MultiFab& mf_in, MultiFab& mf_out,
     }
 
     // number of points in the averaging direction
-    int npts = n_cells[dir];
+    const int npts = n_cells[dir];
 
-    Vector<Real> average(npts*(ncomp),0.);
+    Vector<double> sum = SumOverPlanes(mf_in, dir, incomp, ncomp);
 
-    // dummy variables
-    int r=0;
-    int comp;
+    // divide by the number of cells in each transverse plane (in double), then convert to Real
+    const double navg_inv = 1.0 / static_cast<double>(NumCellsTransverse(dir));
+    Vector<Real> average(sum.size());
+    for (std::size_t m=0; m<sum.size(); ++m) { average[m] = Real(sum[m]*navg_inv); }
 
-    // no tiling or GPU to easily avoid race conditions
-    for (MFIter mfi(mf_in, false); mfi.isValid(); ++mfi) {
+    // copy the profile to the device and broadcast it into mf_out
+    Gpu::DeviceVector<Real> d_average(npts*ncomp);
+    Gpu::copy(Gpu::hostToDevice, average.begin(), average.end(), d_average.begin());
+    Real const* pavg = d_average.data();
 
-        // valid box and the lo/hi coordinates; no ghost cells needed
-        const Box& bx = mfi.validbox();
-        const auto lo = amrex::lbound(bx);
-        const auto hi = amrex::ubound(bx);
-
-        const Array4<const Real> mf = mf_in.array(mfi);
-
-        for (auto n=0; n<ncomp; ++n) {
-            comp = incomp+n;
-            for (auto k = lo.z; k <= hi.z; ++k) {
-                for (auto j = lo.y; j <= hi.y; ++j) {
-                    for (auto i = lo.x; i <= hi.x; ++i) {
-                        if (dir == 0) {
-                            r=i;
-                        } else if (dir == 1) {
-                            r=j;
-                        } else if (dir == 2) {
-                            r=k;
-                        }
-                        // sum up the data
-                        average[ r*(ncomp) + n] += mf(i,j,k,comp);
-                    }
-                }
-            }
-        }
-
-    } // end MFiter
-
-    // sum over all processors
-    ParallelDescriptor::ReduceRealSum(average.dataPtr(),npts*(ncomp));
-
-    // divide by the number of cells
-    int navg=0;
-    if (dir == 0) {
-        navg = n_cells[1]*n_cells[2];
-    } else if (dir == 1) {
-        navg = n_cells[0]*n_cells[2];
-    } else if (dir == 2) {
-        navg = n_cells[0]*n_cells[1];
+    for (MFIter mfi(mf_out, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        const Box& bx = mfi.tilebox();
+        auto const& mf = mf_out.array(mfi);
+        amrex::ParallelFor(bx, ncomp, [=] AMREX_GPU_DEVICE (int i, int j, int k, int n) noexcept
+        {
+            int r = (dir == 0) ? i : ((dir == 1) ? j : k);
+            mf(i,j,k,outcomp+n) = pavg[r*ncomp + n];
+        });
     }
-    for (r=0; r<npts; ++r) {
-        for (auto n=0; n<ncomp; ++n) {
-            average[r*(ncomp) + n] /= navg;
-        }
-    }
-
-    // no tiling or GPU to easily avoid race conditions
-    for (MFIter mfi(mf_out, false); mfi.isValid(); ++mfi) {
-
-        // valid box and the lo/hi coordinates; no ghost cells needed
-        const Box& bx = mfi.validbox();
-        const auto lo = amrex::lbound(bx);
-        const auto hi = amrex::ubound(bx);
-
-        const Array4<Real> mf = mf_out.array(mfi);
-
-        for (auto n=0; n<ncomp; ++n) {
-            comp = outcomp+n;
-            for (auto k = lo.z; k <= hi.z; ++k) {
-                for (auto j = lo.y; j <= hi.y; ++j) {
-                    for (auto i = lo.x; i <= hi.x; ++i) {
-                        if (dir == 0) {
-                            r=i;
-                        } else if (dir == 1) {
-                            r=j;
-                        } else if (dir == 2) {
-                            r=k;
-                        }
-                        // sum up the data
-                        mf(i,j,k,comp) = average[ r*(ncomp) + n];
-                    }
-                }
-            }
-        }
-
-    } // end MFiter
+    Gpu::streamSynchronize(); // d_average must outlive the kernels
 }
 
 
@@ -235,11 +162,16 @@ void ComputeVerticalAverage(const MultiFab& mf, MultiFab& mf_flat,
 
     // this is the inverse of the number of cells in the dir direction we are averaging over
     // by default we average over the entire domain, but one can pass in slab_lo/hi to set bounds
-    Real ninv;
+    // sum_domain is the region actually summed over; ReduceToPlane intersects each box with it
+    // and collapses the dir index to 0 regardless of its range
+    Box sum_domain(domain);
+    double ninv;
     if (slablo != -1 && slabhi != 99999) {
-        ninv = Real(1.)/(slabhi-slablo+1);
+        sum_domain.setSmall(dir, slablo);
+        sum_domain.setBig(dir, slabhi);
+        ninv = 1.0/(slabhi-slablo+1);
     } else {
-        ninv = Real(1.)/(domain.length(dir));
+        ninv = 1.0/(domain.length(dir));
     }
 
     MultiFab mf_onecomp(mf.boxArray(), mf.DistributionMap(), 1, 0);
@@ -249,13 +181,27 @@ void ComputeVerticalAverage(const MultiFab& mf, MultiFab& mf_flat,
         // copy a component of mf into mf_onecomp
         MultiFab::Copy(mf_onecomp,mf,incomp+n,0,1,0);
 
-        // sum up
+        // sum up, accumulating in double (column sums of fields with a large mean lose the
+        // O(1/sqrt(Nz)) averaged fluctuation to float summation error)
         auto const& ma = mf_onecomp.const_arrays();
-        auto fab = ReduceToPlane<ReduceOpSum,Real>(dir, domain, mf_onecomp,
-          [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) -> Real
+        auto fabd = ReduceToPlane<ReduceOpSum,double>(dir, sum_domain, mf_onecomp,
+          [=] AMREX_GPU_DEVICE (int box_no, int i, int j, int k) -> double
           {
-              return ma[box_no](i,j,k); // data at (i,j,k) of Box box_no
+              return static_cast<double>(ma[box_no](i,j,k)); // data at (i,j,k) of Box box_no
           });
+
+        // divide by number of cells in column (in double) to create average, then convert to Real
+        FArrayBox fab(fabd.box(), 1);
+        {
+            auto const& src = fabd.const_array();
+            auto const& dst = fab.array();
+            const double ninv_d = ninv;
+            amrex::ParallelFor(fabd.box(), [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                dst(i,j,k) = Real(src(i,j,k)*ninv_d);
+            });
+            Gpu::streamSynchronize();
+        }
 
         Box dom2d = fab.box();
         Vector<Box> bv(ParallelDescriptor::NProcs(),dom2d);
@@ -268,9 +214,6 @@ void ComputeVerticalAverage(const MultiFab& mf, MultiFab& mf_flat,
         MultiFab mftmp(ba, dm, 1, 0, MFInfo().SetAlloc(false));
         mftmp.setFab(ParallelDescriptor::MyProc(),
                      FArrayBox(fab.box(), 1, fab.dataPtr()));
-
-        // divide by number of cells in column to create average
-        mftmp.mult(ninv);
 
         BoxArray ba2(dom2d);
 

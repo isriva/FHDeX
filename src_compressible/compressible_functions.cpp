@@ -13,6 +13,7 @@ AMREX_GPU_MANAGED bool compressible::do_reservoir = false;
 AMREX_GPU_MANAGED amrex::Real compressible::zeta_ratio = -1.0;
 AMREX_GPU_MANAGED int compressible::dirichlet_type = 1;
 AMREX_GPU_MANAGED bool compressible::constant_transport = false;
+AMREX_GPU_MANAGED bool compressible::scale_SF_with_dVol = true;
 
 void InitializeCompressibleNamespace()
 {
@@ -36,7 +37,16 @@ void InitializeCompressibleNamespace()
         case 3:
             amrex::Print() << "HCB binary transport model selected" << "\n";
             break;
+        default:
+            amrex::Abort("InitializeCompressibleNamespace: transport_type must be 1, 2 or 3");
     }
+#if defined(AMREX_USE_FLOAT)
+    // The Valk/Waldmann and HCB paths form products such as k_B^3, (m_i+m_j)^3, m_i*m_j*eta_i*eta_j
+    // and n_i*n_k in cgs units, which underflow to zero or overflow to inf in single precision.
+    if (transport_type != 1) {
+        amrex::Abort("InitializeCompressibleNamespace: transport_type 2 and 3 are not supported with PRECISION=FLOAT; use transport_type = 1");
+    }
+#endif
 
     // get membrane cell
     membrane_cell = -1; // location of membrane (default)
@@ -107,6 +117,17 @@ void InitializeCompressibleNamespace()
         amrex::Print() << "constant transport chosen\n";
     }
 
+    // constant transport: no spatial or temporal variation of transport coefficients
+    int scale_SF = 1;
+    pp.query("scale_SF_with_dVol",scale_SF);
+    if ((scale_SF != 0) and (scale_SF != 1)) {
+        amrex::Abort("scale_SF_with_dVol must be 0 or 1");
+    }
+    scale_SF_with_dVol = (scale_SF == 1);
+    if (!scale_SF_with_dVol) {
+        amrex::Print() << "Structure factor are not being scaled by dVol \n";
+    }
+
     return;
 }
 
@@ -125,6 +146,17 @@ void GetHcGas() {
 
 void InitConsVar(MultiFab& cons,
                  const amrex::Geometry& geom) {
+
+    // some problem types hard-code the number of species or the cell index of a discontinuity
+    if (prob_type == 2 && nspecies != 4) {
+        Abort("InitConsVar: prob_type = 2 (Rayleigh-Taylor) requires nspecies = 4");
+    }
+    if ((prob_type == 4 || prob_type == 5 || prob_type == 106) && nspecies != 2) {
+        Abort("InitConsVar: prob_type = 4, 5 and 106 require nspecies = 2");
+    }
+    if ((prob_type == 104 || prob_type == 105 || prob_type == 106) && n_cells[0] <= 15) {
+        Abort("InitConsVar: prob_type = 104-106 place the discontinuity at i = 15 and require n_cells[0] > 15");
+    }
 
     const Real* dx_host = geom.CellSize();
     const RealBox& realDomain = geom.ProbDomain();
@@ -315,7 +347,7 @@ void InitConsVar(MultiFab& cons,
             } else if (prob_type == 100) { // sinusoidal density variation
 
                    Real y = itVec[1];
-                   Real Ly = realhi[1] - reallo[0];
+                   Real Ly = realhi[1] - reallo[1];
                    for (int l=0;l<nspecies;l++) {
                      Yk[l] = cu(i,j,k,5+l)/cu(i,j,k,0);
                    }
@@ -328,7 +360,7 @@ void InitConsVar(MultiFab& cons,
             else if (prob_type == 101) { // sinusoidal temperature variation (constant pressure)
 
                    Real y = itVec[1];
-                   Real Ly = realhi[1] - reallo[0];
+                   Real Ly = realhi[1] - reallo[1];
 
                    for (int ns=0;ns<nspecies;++ns) massvec[ns] = rhobar[ns];
 

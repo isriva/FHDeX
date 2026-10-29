@@ -11,11 +11,75 @@
 using namespace amrex;
 
 void
-StochasticPC::InitParticles (MultiFab& phi_fine, Real num_part)
+StochasticPC::InitParticles (MultiFab& phi_fine, Real num_part, PotentialParams const& pot)
 {
     amrex::Print() << "calling InitParticles" << std::endl;
     amrex::Real factor = -1.;
-    AddParticles(phi_fine, BoxArray{}, factor, num_part);
+    AddParticles(phi_fine, BoxArray{}, factor, num_part, pot);
+}
+
+void
+StochasticPC::InitParticlesLattice (MultiFab const& phi_fine, int stride)
+{
+    BL_PROFILE("StochasticPC::InitParticlesLattice");
+    amrex::Print() << "calling InitParticlesLattice with stride " << stride << std::endl;
+
+    const int lev = 1;
+    const auto dx = Geom(lev).CellSizeArray();
+    const auto plo = Geom(lev).ProbLoArray();
+    const Box& domain = Geom(lev).Domain();
+
+    for (MFIter mfi(phi_fine); mfi.isValid(); ++mfi)
+    {
+        // only cells inside the domain: the grown boxes outside it are
+        // periodic images and would duplicate particles
+        Box tile_box = mfi.tilebox() & domain;
+        if (tile_box.isEmpty()) { continue; }
+
+        auto flat_index = FlatIndex(tile_box);
+        Gpu::DeviceVector<unsigned int> counts(tile_box.numPts()+1, 0);
+        unsigned int* pcount = counts.dataPtr();
+        amrex::ParallelFor(tile_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            amrex::ignore_unused(k);
+            bool on_lattice = AMREX_D_TERM((i % stride == 0), && (j % stride == 0), && (k % stride == 0));
+            pcount[flat_index(i, j, k)] = on_lattice ? 1 : 0;
+        });
+
+        Gpu::DeviceVector<unsigned int> offsets(tile_box.numPts()+1, 0);
+        Gpu::exclusive_scan(counts.begin(), counts.end(), offsets.begin());
+        unsigned int num_to_add;
+        Gpu::copy(Gpu::deviceToHost, offsets.begin() + tile_box.numPts(), offsets.end(), &num_to_add);
+        if (num_to_add == 0) { continue; }
+
+        int my_cpu = ParallelDescriptor::MyProc();
+        Long id_start = ParticleType::NextID();
+        ParticleType::NextID(id_start+num_to_add);
+
+        auto& particles = GetParticles(lev);
+        auto& particle_tile = particles[std::make_pair(mfi.index(), mfi.LocalTileIndex())];
+        auto old_size = particle_tile.GetArrayOfStructs().size();
+        particle_tile.resize(old_size + num_to_add);
+
+        ParticleType* pstruct = particle_tile.GetArrayOfStructs()().data() + old_size;
+        unsigned int* poffset = offsets.dataPtr();
+        amrex::ParallelFor(tile_box, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+        {
+            auto cellid = flat_index(i, j, k);
+            for (unsigned int ip = poffset[cellid]; ip < poffset[cellid+1]; ++ip) {
+                ParticleType& p = pstruct[ip];
+                AMREX_D_TERM( Real x = plo[0] + (i + 0.5)*dx[0];,
+                              Real y = plo[1] + (j + 0.5)*dx[1];,
+                              Real z = plo[2] + (k + 0.5)*dx[2];);
+                p.id()  = ip + id_start;
+                p.cpu() = my_cpu;
+                AMREX_D_TERM( p.pos(0) = x;, p.pos(1) = y;, p.pos(2) = z;);
+                AMREX_D_TERM( p.rdata(RealIdx::xold) = x;,
+                              p.rdata(RealIdx::yold) = y;,
+                              p.rdata(RealIdx::zold) = z;);
+            }
+        });
+    }
 }
 
 // TODO(3D): this aliases phi onto RealIdx::zold. In 2D zold is an unused spare
@@ -65,7 +129,8 @@ StochasticPC::ColorParticlesWithPhi (MultiFab const& phi)
 
 void
 StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
-                             amrex::Real factor, amrex::Real num_part)
+                             amrex::Real factor, amrex::Real num_part,
+                             PotentialParams const& pot)
 {
     BL_PROFILE("StochasticPC::AddParticles");
 
@@ -159,11 +224,10 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
         amrex::Print() << "INIT: NEW SIZE OF PARTICLES IN TILE BOX " << tile_box << " " << new_size << std::endl;
 
 
-        int ext_pot = 0;
-        amrex::Real alpha = .25;
-        amrex::Real beta = .75;
-        amrex::Real gamma = 5.e-4;
-        gamma = 1.1e-3;
+        const amrex::Real ep_alpha = pot.ep_alpha;
+        const amrex::Real ep_beta  = pot.ep_beta;
+        const amrex::Real ep_gamma = pot.ep_gamma;
+        const int use_ext_pot = pot.use_ext_pot;
 
 
         // now fill in the data
@@ -185,14 +249,16 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 #elif (AMREX_SPACEDIM == 3)
                 Real r[3] = {amrex::Random(engine), amrex::Random(engine), amrex::Random(engine)};
 #endif
-                if(factor > 0.)
+                // sample from the external well only if it is on; otherwise
+                // keep the uniform-in-cell r[] drawn above
+                if(factor > 0. && use_ext_pot == 1)
                 {
                     Real xm = plo[0] + i*dx[0];
                     Real xp = xm + dx[0];
                     Real ym = plo[1] + j*dx[1];
                     Real yp = ym + dx[1];
-                    Real vpx = (xp - beta)*(xp-beta)*(xp-alpha)*(xp-alpha);
-                    Real vmx = (xm - beta)*(xm-beta)*(xm-alpha)*(xm-alpha);
+                    Real vpx = (xp - ep_beta)*(xp-ep_beta)*(xp-ep_alpha)*(xp-ep_alpha);
+                    Real vmx = (xm - ep_beta)*(xm-ep_beta)*(xm-ep_alpha)*(xm-ep_alpha);
                     Real vpy = (yp - .5)*(yp - .5)*(yp - .5)*(yp - .5);
                     Real vmy = (ym - .5)*(ym - .5)*(ym - .5)*(ym - .5);
                     Real vsubx = (vpx - vmx)/dx[0];
@@ -202,7 +268,7 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 
                     if(std::abs(vsubx) >= 1.e-12)
                     {
-                       sampx = -gamma * std::log(1. - r[0]*(1. - std::exp(-2*vsubx*dx[0]/gamma)))/(2.*vsubx);
+                       sampx = -ep_gamma * std::log(1. - r[0]*(1. - std::exp(-2*vsubx*dx[0]/ep_gamma)))/(2.*vsubx);
 #ifndef AMREX_USE_GPU
                        if( sampx < 0. || sampx > dx[0])
                        {
@@ -217,7 +283,7 @@ StochasticPC:: AddParticles (MultiFab& phi_fine, const BoxArray& ba_to_exclude,
 
                     if(std::abs(vsuby) >= 1.e-12)
                     {
-                       sampy = -gamma * std::log(1. - r[1]*(1. - std::exp(-2*vsuby*dx[1]/gamma)))/(2.*vsuby);
+                       sampy = -ep_gamma * std::log(1. - r[1]*(1. - std::exp(-2*vsuby*dx[1]/ep_gamma)))/(2.*vsuby);
 #ifndef AMREX_USE_GPU
                        if( sampy < 0. || sampy > dx[1])
                        {
@@ -561,12 +627,9 @@ StochasticPC::AdvectWithRandomWalk (int lev, Real dt, Real diff_coeff)
 
 void
 StochasticPC::AdvectParticles (int lev, Real dt,
-                                       Real interaction_range,
-                                       Real interaction_strength,
-                                       Real interaction_scale,
-                                       Real num_part,
-                                       Real diff_coeff,
-                                       int use_ext_pot)
+                               PotentialParams const& pot,
+                               Real num_part,
+                               Real diff_coeff)
 {
     BL_PROFILE("StochasticPC::AdvectParticles");
     const auto dx = Geom(lev).CellSizeArray();
@@ -581,6 +644,10 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                   const Real Ly = p_hi[1] - p_lo[1];,
                   const Real Lz = p_hi[2] - p_lo[2];);
 
+    // pair interactions are on only with the interaction potential and a cutoff
+    const Real interaction_range = (pot.use_int_pot) ? pot.ip_range : 0.0;
+    const int use_ext_pot = pot.use_ext_pot;
+
     if (interaction_range > 0.0) {
         Real Lmin = std::numeric_limits<Real>::max();
         for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
@@ -588,21 +655,18 @@ StochasticPC::AdvectParticles (int lev, Real dt,
             Lmin = std::min(Lmin, L);
         }
         if (interaction_range >= 0.5 * Lmin) {
-            amrex::Abort("interaction_range must be strictly less than half the domain size");
-        }
-        if (interaction_scale <= 0.0) {
-            amrex::Abort("interaction_scale must be positive");
+            amrex::Abort("amr.ip_range must be strictly less than half the domain size");
         }
     }
 
-    if (use_ext_pot == 0 && interaction_range <= 0.0) {
-        return;
-    }
+    // No early return here: with neither potential on, the branch below still has to
+    // record xold and apply the random walk (AdvectWithRandomWalk is no longer called
+    // by ParticleData::advance_particles).
 
-    amrex::Real alpha = .25;
-    amrex::Real beta = .75;
-    amrex::Real gamma = 5.e-4;
-    gamma = 1.1e-3;
+    const amrex::Real ep_alpha = pot.ep_alpha;
+    const amrex::Real ep_beta  = pot.ep_beta;
+    const amrex::Real ep_gamma = pot.ep_gamma;
+    const PotentialParams pot_loc = pot;
 
 //    static bool s_params_inited = false;
 //    static int s_print_forces = 0;
@@ -616,15 +680,9 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
     const Real rcut = interaction_range;
     const Real rcut2 = rcut * rcut;
-    const Real inv_scale3 = (interaction_scale > 0.0)
-        ? 1.0 / (interaction_scale * interaction_scale * interaction_scale)
-        : 0.0;
-//    const Real strength = (num_part > 0.0) ? (interaction_strength / num_part) : 0.0;
-    const Real strength = interaction_strength / num_part;
+    const Real inv_num_part = 1.0 / num_part;
     const Real stddev = std::sqrt(2.0 * diff_coeff * dt);
     const int on_surf = 0;
-
-//    amrex::Print{} << "interation_strength " << interaction_strength << std::endl;
 
     int required_cells = 0;
     if (interaction_range > 0.0) {
@@ -635,7 +693,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
         required_cells = static_cast<int>(std::ceil(interaction_range / dxmin));
         required_cells = std::max(1, required_cells);
         if (required_cells > m_neighbor_cells) {
-            amrex::Abort("interaction_range requires more neighbor cells than configured");
+            amrex::Abort("amr.ip_range requires more neighbor cells than configured");
         }
     }
 
@@ -729,8 +787,8 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
                 xloc = p.pos(0);
                 yloc = p.pos(1);
-                Vsubx = 2.*(xloc - beta) * (xloc - alpha)* (2.*xloc - alpha - beta) / gamma;
-                Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
+                Vsubx = 2.*(xloc - ep_beta) * (xloc - ep_alpha)* (2.*xloc - ep_alpha - ep_beta) / ep_gamma;
+                Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / ep_gamma;
 
                 dpx += -dt*Vsubx;
                 dpy += -dt*Vsuby;
@@ -775,9 +833,8 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                     if (r2 >= rcut2 || r2 == 0.0) continue;
 
                     const Real r = std::sqrt(r2);
-                    const Real r3 = r2 * r;
-                    const Real U = strength * std::exp(-r3 * inv_scale3);
-                    const Real factor = -3.0 * inv_scale3 * U * r;
+                    // force on this particle is (dU/dr)/r * (x_q - x_p), per particle weight
+                    const Real factor = ip_dUdr_over_r(r, pot_loc) * inv_num_part;
 
 
                     dpx += dt * factor * dxij;
@@ -803,7 +860,7 @@ StochasticPC::AdvectParticles (int lev, Real dt,
 
     } else {
 
-        // interaction_range <= 0: no neighbor forces
+        // no pair interactions: external potential and random walk only
         amrex::ParallelForRNG(np,
         [=] AMREX_GPU_DEVICE (int i, RandomEngine const& engine) noexcept
         {
@@ -823,9 +880,9 @@ StochasticPC::AdvectParticles (int lev, Real dt,
                 Real xloc = p.pos(0);
                 Real yloc = p.pos(1);
 
-                Real Vsubx = 2.*(xloc - beta) * (xloc - alpha) *
-                              (2.*xloc - alpha - beta) / gamma;
-                Real Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / gamma;
+                Real Vsubx = 2.*(xloc - ep_beta) * (xloc - ep_alpha) *
+                              (2.*xloc - ep_alpha - ep_beta) / ep_gamma;
+                Real Vsuby = 0.5*4.*(yloc - .5)*(yloc - .5)*(yloc - .5) / ep_gamma;
 
                 dpx += -dt*Vsubx;
                 dpy += -dt*Vsuby;

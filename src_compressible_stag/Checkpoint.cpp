@@ -26,7 +26,7 @@ namespace {
 }
 
 void WriteCheckPoint(int step,
-                     const amrex::Real time,
+                     const double time,
                      int statsCount,
                      const amrex::Geometry& /*geom*/,
                      const amrex::MultiFab& cu,
@@ -131,11 +131,8 @@ void WriteCheckPoint(int step,
 
     // C++ random number engine
     // have each MPI process write its random number state to a different file
-    int comm_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &comm_rank);
-
-    int n_ranks;
-    MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
+    int comm_rank = ParallelDescriptor::MyProc();
+    int n_ranks = ParallelDescriptor::NProcs();
 
     // don't write out all the rng states at once (overload filesystem)
     // one at a time write out the rng states to different files, one for each MPI rank
@@ -257,7 +254,7 @@ void WriteCheckPoint(int step,
 }
 
 void ReadCheckPoint(int& step,
-                    amrex::Real& time,
+                    double& time,
                     int& statsCount,
                     amrex::Geometry& geom,
                     const amrex::Box& domain,
@@ -424,15 +421,12 @@ void ReadCheckPoint(int& step,
 
     // C++ random number engine
     // each MPI process reads in its own file
-    int comm_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &comm_rank);
-
-    int n_ranks;
-    MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
+    int comm_rank = ParallelDescriptor::MyProc();
+    int n_ranks = ParallelDescriptor::NProcs();
 
     if (seed == -1) {
 
-#ifdef AMREX_USE_CUDA
+#ifdef AMREX_USE_GPU
         Abort("Restart with negative seed not supported on GPU");
 #endif
 

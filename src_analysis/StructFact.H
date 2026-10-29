@@ -6,6 +6,9 @@
 #include <AMReX_Vector.H>
 #include <AMReX_VisMF.H>
 #include <AMReX_GpuComplex.H>
+#include <AMReX_FFT.H>
+
+#include <memory>
 
 #include <string>
 
@@ -39,12 +42,21 @@ class StructFact {
 
     Geometry geom_sf;
 
+    // forward R2C plan reused across ComputeFFT calls (plan creation is expensive on GPUs);
+    // rebuilt if ComputeFFT is called for a different domain
+    std::unique_ptr<amrex::FFT::R2C<Real, amrex::FFT::Direction::forward>> fft_plan;
+    Box fft_domain;
+
 public:
 
-    // Vector containing running sums of real and imaginary components
+    // Running averages (over nsamples) of real and imaginary components
     // of inner products (covariances) of DFTs
     MultiFab cov_real;
     MultiFab cov_imag;
+
+    // Kahan compensation for cov_real (nonzero expectation; swamps in single precision).
+    // Not checkpointed; restarting it from zero costs at most an ulp.
+    MultiFab cov_real_k;
 
     // Vector of MultiFabs containing final magnitude of covariances
     MultiFab cov_mag;
