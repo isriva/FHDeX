@@ -1177,10 +1177,16 @@ void StructFact::ReadCheckPoint(std::string checkfile_base,
     }
 
     // read in the MultiFab data
-    VisMF::Read(cov_real,
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "cov_real"));
-    VisMF::Read(cov_imag,
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "cov_imag"));
+    // each is read on the checkpoint's BoxArray, then copied onto ba_in, so a restart
+    // may use a different max_grid_size than the run that wrote the checkpoint
+    auto read_copy = [&checkpointname] (MultiFab& mf, const std::string& name)
+    {
+        MultiFab mf_temp;
+        VisMF::Read(mf_temp, amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", name));
+        mf.ParallelCopy(mf_temp, 0, 0, mf.nComp());
+    };
+    read_copy(cov_real, "cov_real");
+    read_copy(cov_imag, "cov_imag");
 
     // the checkpoint stores running sums; convert back to running averages
     if (nsamples > 0) {
@@ -1190,6 +1196,5 @@ void StructFact::ReadCheckPoint(std::string checkfile_base,
     }
     cov_real_k.define(cov_real.boxArray(), cov_real.DistributionMap(), NCOV, 0);
     cov_real_k.setVal(0.0);
-    VisMF::Read(cov_mag,
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "cov_mag"));
+    read_copy(cov_mag, "cov_mag");
 }

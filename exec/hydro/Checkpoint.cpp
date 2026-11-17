@@ -15,6 +15,18 @@ namespace {
         constexpr std::streamsize bl_ignore_max { 100000 };
         is.ignore(bl_ignore_max, '\n');
     }
+
+    void Read_Copy_MF_Checkpoint(amrex::MultiFab& mf, const std::string& mf_name,
+                                 const std::string& checkpointname)
+    {
+        // VisMF::Read defines mf_temp on the BoxArray stored in the checkpoint
+        MultiFab mf_temp;
+        VisMF::Read(mf_temp, amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", mf_name));
+
+        // copy valid and ghost data onto the (possibly different) new BoxArray
+        const int ng = std::min(mf.nGrow(), mf_temp.nGrow());
+        mf.ParallelCopy(mf_temp, 0, 0, mf.nComp(), ng, ng);
+    }
 }
 
 void WriteCheckPoint(int step,
@@ -168,9 +180,15 @@ void ReadCheckPoint(int& step,
         is >> time;
         GotoNextLine(is);
 
-        // read in level 'lev' BoxArray from Header
-        ba.readFrom(is);
+        // read in the BoxArray of the run that wrote the checkpoint
+        BoxArray ba_old;
+        ba_old.readFrom(is);
         GotoNextLine(is);
+
+        // build a new BoxArray using the current max_grid_size, so a restart
+        // may use a different grid decomposition than the original run
+        ba.define(ba_old.minimalBox());
+        ba.maxSize(IntVect(max_grid_size));
 
         // create a distribution mapping
         dmap.define(ba, ParallelDescriptor::NProcs());
@@ -257,13 +275,11 @@ void ReadCheckPoint(int& step,
     }
 
     // read in the MultiFab data
-    VisMF::Read(umac[0],
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "umac"));
-    VisMF::Read(umac[1],
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "vmac"));
+    // each is read on the checkpoint's BoxArray, then copied (incl. ghost cells) onto the new one
+    Read_Copy_MF_Checkpoint(umac[0], "umac", checkpointname);
+    Read_Copy_MF_Checkpoint(umac[1], "vmac", checkpointname);
 #if (AMREX_SPACEDIM == 3)
-    VisMF::Read(umac[2],
-                amrex::MultiFabFileFullPrefix(0, checkpointname, "Level_", "wmac"));
+    Read_Copy_MF_Checkpoint(umac[2], "wmac", checkpointname);
 #endif
 }
 
