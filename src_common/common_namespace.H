@@ -62,6 +62,7 @@ namespace common {
     extern std::string                plot_init_file;
     extern AMREX_GPU_MANAGED int      prob_type;
     extern int                        restart;
+    extern std::string                restart_file;  // set when 'restart' is a checkpoint path
     extern int                        stats_int;
     extern int                        reset_stats;
     extern int                        particle_restart;

@@ -151,10 +151,8 @@ void ReadCheckPoint(int& step,
     // timer for profiling
     BL_PROFILE_VAR("ReadCheckPoint()",ReadCheckPoint);
 
-    // checkpoint file name, e.g., chk0000010
-    const std::string& checkpointname = amrex::Concatenate(chk_base_name,restart,7);
-
-    amrex::Print() << "Restart from checkpoint " << checkpointname << "\n";
+    // checkpoint to read: the path given as 'restart', or e.g. chk0000010 for an integer 'restart'
+    const std::string checkpointname = RestartCheckpointName(chk_base_name,7);
 
     VisMF::IO_Buffer io_buffer(VisMF::GetIOBufferSize());
 
@@ -281,6 +279,8 @@ void ReadCheckPoint(int& step,
 #if (AMREX_SPACEDIM == 3)
     Read_Copy_MF_Checkpoint(umac[2], "wmac", checkpointname);
 #endif
+
+    amrex::Print() << "Restarted from " << checkpointname << "\n";
 }
 
 void

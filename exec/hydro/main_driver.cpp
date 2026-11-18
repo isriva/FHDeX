@@ -18,6 +18,7 @@
 #include <AMReX_MultiFabUtil.H>
 
 #include "chrono"
+#include <filesystem>
 
 using namespace std::chrono;
 using namespace amrex;
@@ -370,7 +371,18 @@ void main_driver(const char* argv)
                         structFact.define(ba,dmap,var_names,var_scaling,s_pairA,s_pairB);
                 }
         } else {
-                structFact.ReadCheckPoint("chk_SF",ba,dmap);
+                // the structure factor checkpoint (chk_SF + step) is written next to the
+                // fluid checkpoint, so look for it in the same directory
+                std::string sf_dir = ".";
+                if (!restart_file.empty()) {
+                        std::string chk_path = restart_file;
+                        while (chk_path.size() > 1 && chk_path.back() == '/') { chk_path.pop_back(); }
+                        const std::string parent = std::filesystem::path(chk_path).parent_path().string();
+                        if (!parent.empty()) { sf_dir = parent; }
+                }
+                // step_start is the checkpointed step + 1 (see ReadCheckPoint)
+                const int sf_step = restart_file.empty() ? restart : step_start-1;
+                structFact.ReadCheckPoint(sf_dir + "/" + amrex::Concatenate("chk_SF",sf_step,9),ba,dmap);
         }
 
         ///////////////////////////////////////////

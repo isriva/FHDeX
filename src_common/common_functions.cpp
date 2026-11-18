@@ -44,6 +44,7 @@ std::string                common::chk_base_name;
 std::string                common::plot_init_file;
 AMREX_GPU_MANAGED int      common::prob_type;
 int                        common::restart;
+std::string                common::restart_file;
 int                        common::stats_int;
 int                        common::reset_stats;
 int                        common::particle_restart;
@@ -397,6 +398,7 @@ void InitializeCommonNamespace() {
     plot_init_file = "";
     prob_type = 1;
     restart = -1;
+    restart_file = "";
     stats_int = 1;
     reset_stats = 0;
     particle_restart = -1;
@@ -724,7 +726,26 @@ void InitializeCommonNamespace() {
     pp.query("chk_base_name",chk_base_name);
     pp.query("plot_init_file",plot_init_file);
     pp.query("prob_type",prob_type);
-    pp.query("restart",restart);
+    // 'restart' is either an integer (-1 = fresh start, N = read <chk_base_name>N from the
+    // run directory), or the path to a checkpoint directory, which is read in place
+    {
+        std::string restart_str;
+        if (pp.query("restart",restart_str)) {
+            bool is_int = false;
+            try {
+                std::size_t pos = 0;
+                const int r = std::stoi(restart_str, &pos);
+                if (pos == restart_str.size()) {
+                    restart = r;
+                    is_int = true;
+                }
+            } catch (const std::exception&) {}
+            if (!is_int) {
+                restart_file = restart_str;
+                restart = 1;
+            }
+        }
+    }
     pp.query("stats_int",stats_int);
     pp.query("reset_stats",reset_stats);
     pp.query("particle_restart",particle_restart);
@@ -1196,4 +1217,12 @@ void InitializeCommonNamespace() {
 #endif
 
 
+}
+
+std::string RestartCheckpointName(const std::string& base, int ndigits)
+{
+    if (!common::restart_file.empty()) {
+        return common::restart_file;
+    }
+    return amrex::Concatenate(base, common::restart, ndigits);
 }

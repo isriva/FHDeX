@@ -286,10 +286,8 @@ void ReadCheckPoint(int& step,
     // timer for profiling
     BL_PROFILE_VAR("ReadCheckPoint()",ReadCheckPoint);
 
-    // checkpoint file name, e.g., chk0000010
-    const std::string& checkpointname = amrex::Concatenate("chk",restart,9);
-
-    amrex::Print() << "Restart from checkpoint " << checkpointname << "\n";
+    // checkpoint to read: the path given as 'restart', or e.g. chk000000010 for an integer 'restart'
+    const std::string checkpointname = RestartCheckpointName("chk",9);
 
     VisMF::IO_Buffer io_buffer(VisMF::GetIOBufferSize());
 
@@ -566,6 +564,8 @@ void ReadCheckPoint(int& step,
     cumom[0].FillBoundary(geom.periodicity());
     cumom[1].FillBoundary(geom.periodicity());
     cumom[2].FillBoundary(geom.periodicity());
+
+    amrex::Print() << "Restarted from " << checkpointname << "\n";
 }
 
 

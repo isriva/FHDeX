@@ -32,6 +32,10 @@ using namespace amrex;
 // copy contents of common_params_module to C++ common namespace
 void InitializeCommonNamespace();
 
+// name of the checkpoint to restart from: restart_file if 'restart' was given as a path,
+// otherwise amrex::Concatenate(base, restart, ndigits)
+std::string RestartCheckpointName(const std::string& base, int ndigits);
+
 ///////////////////////////
 // in BCPhysToMath.cpp
 void BCPhysToMath(int type, Vector<int>& bc_lo, Vector<int>& bc_hi);

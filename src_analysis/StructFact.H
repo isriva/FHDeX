@@ -121,7 +121,8 @@ public:
     void WriteCheckPoint(const int& step,
                          std::string checkfile_base);
 
-    void ReadCheckPoint(std::string checkfile_base,
+    // checkpointname: full path of the structure factor checkpoint, e.g. chk_SF000000010
+    void ReadCheckPoint(const std::string& checkpointname,
                         BoxArray& ba_in,
                         DistributionMapping& dmap_in);
 

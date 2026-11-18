@@ -1101,13 +1101,11 @@ namespace {
     }
 }
 
-void StructFact::ReadCheckPoint(std::string checkfile_base,
+void StructFact::ReadCheckPoint(const std::string& checkpointname,
                                 BoxArray& ba_in,
                                 DistributionMapping& dmap_in)
 {
-    const std::string& checkpointname = amrex::Concatenate(checkfile_base, restart, 9);
-
-    amrex::Print() << "Restart from checkpoint " << checkpointname << "\n";
+    amrex::Print() << "Restart structure factor from " << checkpointname << "\n";
 
     VisMF::IO_Buffer io_buffer(VisMF::GetIOBufferSize());
 
