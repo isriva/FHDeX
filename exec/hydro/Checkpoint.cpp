@@ -283,6 +283,87 @@ void ReadCheckPoint(int& step,
     amrex::Print() << "Restarted from " << checkpointname << "\n";
 }
 
+void ReadPlotFileVel(int& step,
+                     amrex::Real& time,
+                     std::array< MultiFab, AMREX_SPACEDIM >& umac,
+                     TurbForcing& turbforce,
+                     BoxArray& ba, DistributionMapping& dmap,
+                     const Geometry& geom)
+{
+    // timer for profiling
+    BL_PROFILE_VAR("ReadPlotFileVel()",ReadPlotFileVel);
+
+    amrex::Print() << "Restart velocities from plotfile " << restart_plotfile << "\n";
+
+    PlotFileData pf(restart_plotfile);
+
+    if (pf.spaceDim() != AMREX_SPACEDIM) {
+        Abort("ReadPlotFileVel: plotfile dimensionality does not match AMREX_SPACEDIM");
+    }
+    if (pf.probDomain(0) != geom.Domain()) {
+        Abort("ReadPlotFileVel: plotfile domain does not match n_cells");
+    }
+
+    // the plotfile stores the step it was written at; the next step to take is step+1
+    step = pf.levelStep(0) + 1;
+    time = pf.time();
+
+    // build a new BoxArray using the current max_grid_size
+    ba.define(geom.Domain());
+    ba.maxSize(IntVect(max_grid_size));
+    dmap.define(ba, ParallelDescriptor::NProcs());
+
+    if (turbForcing == 1) {
+        // the forcing coefficients are not stored in a plotfile, so they start from zero
+        turbforce.define(ba,dmap,turb_a,turb_b);
+        if (turbRestartRun >= 0) {
+            amrex::Print() << "WARNING: restart_plotfile does not contain the turbulent forcing state; "
+                           << "forcing coefficients are reset to zero\n";
+        }
+    }
+
+    AMREX_D_TERM(umac[0].define(convert(ba,nodal_flag_x), dmap, 1, 1);,
+                 umac[1].define(convert(ba,nodal_flag_y), dmap, 1, 1);,
+                 umac[2].define(convert(ba,nodal_flag_z), dmap, 1, 1););
+
+    // cell-centered copy of the shifted velocity with one ghost cell; the face value at
+    // index i is the shifted cell value at index i (see ShiftFaceToCC), so the high face
+    // of each box comes from the ghost cell (the neighboring box, or the periodic image).
+    // On non-periodic boundaries the ghost stays zero, i.e. zero normal velocity at the wall.
+    MultiFab cc(ba, dmap, 1, 1);
+
+    for (int d=0; d<AMREX_SPACEDIM; ++d) {
+
+        std::string varname = "shifted_vel";
+        varname += (120+d);
+
+        // read this component on the plotfile's BoxArray, then copy onto ours
+        MultiFab mf_pf = pf.get(0, varname);
+        cc.setVal(0.);
+        cc.ParallelCopy(mf_pf, 0, 0, 1, 0, 0);
+        cc.FillBoundary(geom.periodicity());
+
+        for (MFIter mfi(umac[d],TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            const Box& bx = mfi.tilebox();   // nodal in direction d
+            Array4<Real      > const& face = umac[d].array(mfi);
+            Array4<Real const> const& cell = cc.const_array(mfi);
+            amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+            {
+                face(i,j,k) = cell(i,j,k);
+            });
+        }
+
+        // set physical boundary values and fill ghost cells (incl. periodic)
+        MultiFabPhysBCDomainVel(umac[d], geom, d);
+        int is_inhomogeneous = 1;
+        MultiFabPhysBCMacVel(umac[d], geom, d, is_inhomogeneous);
+        umac[d].FillBoundary(geom.periodicity());
+    }
+
+    amrex::Print() << "Restarted velocities from plotfile " << restart_plotfile
+                   << " (step " << step-1 << ", time " << time << ")\n";
+}
+
 void
 ReadFile (const std::string& filename, Vector<char>& charBuf,
           bool bExitOnError)

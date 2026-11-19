@@ -61,6 +61,14 @@ void ReadCheckPoint(int& step,
         TurbForcing& turbforce,
         BoxArray& ba, DistributionMapping& dmap);
 
+// restart the velocities from the shifted_vel{x,y,z} fields of the plotfile restart_plotfile
+void ReadPlotFileVel(int& step,
+        amrex::Real& time,
+        std::array< MultiFab, AMREX_SPACEDIM >& umac,
+        TurbForcing& turbforce,
+        BoxArray& ba, DistributionMapping& dmap,
+        const amrex::Geometry& geom);
+
 void ReadFile(const std::string& filename, Vector<char>& charBuf,
         bool bExitOnError=true);
 

@@ -18,7 +18,6 @@
 #include <AMReX_MultiFabUtil.H>
 
 #include "chrono"
-#include <filesystem>
 
 using namespace std::chrono;
 using namespace amrex;
@@ -106,6 +105,9 @@ void main_driver(const char* argv)
 
         if (restart > 0) {
                 ReadCheckPoint(step_start,time,umac,turbforce,ba,dmap);
+        }
+        else if (!restart_plotfile.empty()) {
+                ReadPlotFileVel(step_start,time,umac,turbforce,ba,dmap,geom);
         }
         else {
 
@@ -371,18 +373,7 @@ void main_driver(const char* argv)
                         structFact.define(ba,dmap,var_names,var_scaling,s_pairA,s_pairB);
                 }
         } else {
-                // the structure factor checkpoint (chk_SF + step) is written next to the
-                // fluid checkpoint, so look for it in the same directory
-                std::string sf_dir = ".";
-                if (!restart_file.empty()) {
-                        std::string chk_path = restart_file;
-                        while (chk_path.size() > 1 && chk_path.back() == '/') { chk_path.pop_back(); }
-                        const std::string parent = std::filesystem::path(chk_path).parent_path().string();
-                        if (!parent.empty()) { sf_dir = parent; }
-                }
-                // step_start is the checkpointed step + 1 (see ReadCheckPoint)
-                const int sf_step = restart_file.empty() ? restart : step_start-1;
-                structFact.ReadCheckPoint(sf_dir + "/" + amrex::Concatenate("chk_SF",sf_step,9),ba,dmap);
+                structFact.ReadCheckPoint("chk_SF",ba,dmap);
         }
 
         ///////////////////////////////////////////
@@ -434,7 +425,7 @@ void main_driver(const char* argv)
 
         ///////////////////////////////////////////
 
-        if (restart < 0) {
+        if (restart < 0 && restart_plotfile.empty()) {
 
                 // We do the analysis first so we include the initial condition in the files if n_steps_skip=0
                 if (n_steps_skip == 0 && struct_fact_int > 0) {
@@ -509,6 +500,34 @@ void main_driver(const char* argv)
         }
 
         ///////////////////////////////////////////
+
+        // turbRestartRun < 0: no time step is taken; only write the plotfile and the
+        // turbulence energy spectrum for the checkpointed step, then exit
+        if (turbRestartRun < 0) {
+
+                // ReadCheckPoint sets step_start to the checkpointed step + 1
+                const int step = step_start-1;
+
+                WritePlotFile(step,time,geom,umac,pres);
+
+                if (turbForcing == 1) {
+                        // copy velocities into structFactMF
+                        for(int d=0; d<AMREX_SPACEDIM; d++) {
+                                ShiftFaceToCC(umac[d], 0, structFactMF, d, 1);
+                        }
+                        // reset and compute structure factor
+                        turbStructFact.FortStructure(structFactMF,1);
+                        turbStructFact.CallFinalize();
+
+                        // integrate cov_mag over shells in k and write to file
+                        turbStructFact.IntegratekShells(step);
+                }
+
+                Real stop_time = ParallelDescriptor::second() - strt_time;
+                ParallelDescriptor::ReduceRealMax(stop_time);
+                amrex::Print() << "Run time = " << stop_time << std::endl;
+                return;
+        }
 
         //Time stepping loop
         for(int step=step_start;step<=max_step;++step) {

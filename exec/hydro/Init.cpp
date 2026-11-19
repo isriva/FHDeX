@@ -5,6 +5,8 @@ using namespace amrex;
     
 AMREX_GPU_MANAGED int hydro::sf_restart = -1;
 AMREX_GPU_MANAGED amrex::Real hydro::variance_coef_mom_scaling = 1.0;
+int hydro::turbRestartRun = 1;
+std::string hydro::restart_plotfile = "";
 
 void InitializeHydroNamespace() {
     
@@ -16,6 +18,23 @@ void InitializeHydroNamespace() {
     
     // setup scaling of varaince of noise
     pp.query("variance_coef_mom_scaling",variance_coef_mom_scaling);
+
+    // restart for turbulence
+    // if >= 0: restart and advance in time as usual
+    // if <  0: read the checkpoint, take no time step, and only write the plotfile
+    //          and turbulence energy spectrum for the checkpointed step
+    pp.query("turbRestartRun",turbRestartRun);
+
+    // restart the velocity field from the shifted_vel{x,y,z} fields of an AMReX plotfile
+    // (path to the plotfile directory) instead of from a checkpoint
+    pp.query("restart_plotfile",restart_plotfile);
+    if (!restart_plotfile.empty() && restart > 0) {
+        amrex::Abort("specify either restart (checkpoint) or restart_plotfile, not both");
+    }
+
+    if (turbRestartRun < 0 && restart <= 0 && restart_plotfile.empty()) {
+        amrex::Abort("turbRestartRun < 0 requires restarting from a checkpoint (restart > 0 or a checkpoint path) or from restart_plotfile");
+    }
 
 }
 
