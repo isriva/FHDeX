@@ -10,7 +10,8 @@ public:
     TurbForcingComp();
 
     void define(BoxArray ba_in, DistributionMapping dmap_in,
-                const Real& a_in, const Real& b_in, const Real& c_in, const Real& d_in, const Real& alpha_in);
+                const Real& a_in, const Real& b_in, const Real& c_in, const Real& d_in, const Real& alpha_in,
+                const int& kf2_in);
 
     void Initialize(const Geometry& geom_in);
 
@@ -22,11 +23,21 @@ public:
 
     void setU(const int& i, Real fs, Real fc);
 
+    // number of forced wavevectors (one per +/-k pair)
+    int nModes() const { return nmodes; }
+
+    // number of OU coefficients per forcing type: 3 components x (cos, sin) per mode
+    int nForcing() const { return 6*nmodes; }
+
 private:
 
-    Gpu::HostVector<int> KX{1, 0, 0, 1, 1, 0, 1, 2, 0, 0, 2, 2, 1, 0, 1, 0, 2, 1, 1, 2, 2, 0};
-    Gpu::HostVector<int> KY{0, 1, 0, 1, 0, 1, 1, 0, 2, 0, 1, 0, 2, 2, 0, 1, 1, 2, 1, 2, 0, 2};
-    Gpu::HostVector<int> KZ{0, 0, 1, 0, 1, 1, 1, 0, 0, 2, 0, 1, 0, 1, 2, 2, 1, 1, 2, 0, 2, 2};
+    // forced wavevectors (in units of 2*pi/L), filled in define() according to turb_kf2
+    // each entry represents the pair +/-k through its cos(k.x) and sin(k.x) terms
+    Gpu::HostVector<int> KX;
+    Gpu::HostVector<int> KY;
+    Gpu::HostVector<int> KZ;
+
+    int nmodes = 0;
 
     Gpu::HostVector<Real> ForcingS;
     Gpu::HostVector<Real> ForcingC;

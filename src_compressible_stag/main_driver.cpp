@@ -855,7 +855,7 @@ void main_driver(const char* argv)
 #if defined(TURB)
         // define turbulence forcing object
         if (turbForcing > 1) {
-            turbforce.define(ba,dmap,turb_a,turb_b,turb_c,turb_d,turb_alpha);
+            turbforce.define(ba,dmap,turb_a,turb_b,turb_c,turb_d,turb_alpha,turb_kf2);
         }
 #endif
 

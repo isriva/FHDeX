@@ -8,6 +8,7 @@ namespace compressible {
     extern AMREX_GPU_MANAGED int all_correl;
     extern AMREX_GPU_MANAGED int nspec_surfcov;
     extern AMREX_GPU_MANAGED int turbRestartRun;
+    extern AMREX_GPU_MANAGED int turb_kf2;
     extern AMREX_GPU_MANAGED bool do_reservoir;
     extern AMREX_GPU_MANAGED amrex::Real zeta_ratio;
     extern AMREX_GPU_MANAGED int dirichlet_type;

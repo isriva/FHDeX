@@ -120,7 +120,7 @@ void WriteCheckPoint(int step,
 #if defined(TURB)
         // Write turbulent forcings
         if (turbForcing > 1) {
-            for (int i=0; i<132; ++i) {
+            for (int i=0; i<turbforce.nForcing(); ++i) {
                 auto [f_sol, f_comp] = turbforce.getU(i);
                 HeaderFile << f_sol << "\n";
                 HeaderFile << f_comp << "\n";
@@ -306,7 +306,7 @@ void ReadCheckPoint(int& step,
 
 #if defined(TURB)
     if ((turbForcing > 1) and (turbRestartRun)) {
-        turbforce.define(ba,dmap,turb_a,turb_b,turb_c,turb_d,turb_alpha);
+        turbforce.define(ba,dmap,turb_a,turb_b,turb_c,turb_d,turb_alpha,turb_kf2);
     }
 #endif
 
@@ -357,7 +357,7 @@ void ReadCheckPoint(int& step,
         if ((turbForcing > 1) and (turbRestartRun)) {
             Real fs_temp;
             Real fc_temp;
-            for (int i=0; i<132; ++i) {
+            for (int i=0; i<turbforce.nForcing(); ++i) {
                 is >> fs_temp;
                 is >> fc_temp;
                 turbforce.setU(i,fs_temp,fc_temp);

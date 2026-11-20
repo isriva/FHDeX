@@ -9,6 +9,7 @@ AMREX_GPU_MANAGED int compressible::do_2D;
 AMREX_GPU_MANAGED int compressible::all_correl;
 AMREX_GPU_MANAGED int compressible::nspec_surfcov = 0;
 AMREX_GPU_MANAGED int compressible::turbRestartRun = 1;
+AMREX_GPU_MANAGED int compressible::turb_kf2 = 8;
 AMREX_GPU_MANAGED bool compressible::do_reservoir = false;
 AMREX_GPU_MANAGED amrex::Real compressible::zeta_ratio = -1.0;
 AMREX_GPU_MANAGED int compressible::dirichlet_type = 1;
@@ -83,6 +84,13 @@ void InitializeCompressibleNamespace()
     if (turbRestartRun == 0) {
       if (restart <= 0) amrex::Abort("turbRestartRun requires restarting from a checkpoint, restart > 0");
       if (max_step != restart+1) amrex::Abort("this is a single step run; max_step should be equal to restart+1");
+    }
+
+    // turbulent forcing band: square of the max forced wavenumber K_F (in units of 2*pi/L)
+    // 8: K_F = 2*sqrt(2) (default); 2: K_F = sqrt(2) (18 nodes, Eswaran & Pope 1988)
+    pp.query("turb_kf2",turb_kf2);
+    if (turb_kf2 != 2 && turb_kf2 != 8) {
+      amrex::Abort("turb_kf2 must be 2 (K_F = sqrt(2)) or 8 (K_F = 2*sqrt(2))");
     }
 
     // do reservoir?
